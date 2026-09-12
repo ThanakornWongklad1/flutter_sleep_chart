@@ -1,3 +1,12 @@
+## 0.3.1
+
+* Fixed a `prefer_interpolation_to_compose_strings` lint in
+  `_formatDuration` flagged by pub.dev's static analysis.
+* Consolidated the example app's Normal/Asleep/In Bed pages and shared
+  helpers into a single `main.dart` — pub.dev's Example tab only renders
+  that file, not files it imports, so the split across multiple files was
+  hiding most of the usage from anyone browsing the package there.
+
 ## 0.3.0
 
 * **Breaking:** replaced `haloBackground` with `haloOpacity`. The halo is

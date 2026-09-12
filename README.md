@@ -429,20 +429,19 @@ class ExampleApp extends StatelessWidget {
 }
 ```
 
-The runnable example app (`example/lib/`) is split across three pages,
-switchable via a bottom nav bar:
+The runnable example app (`example/lib/main.dart`) has three pages,
+switchable via a bottom nav bar — kept in one file on purpose, since
+pub.dev's Example tab only renders `main.dart` itself, not files it
+imports:
 
-- `normal_page.dart` — the detailed Awake/REM/Light/Deep breakdown, including
-  a fragmented micro-arousal cluster that exercises the minimum-bar-width
+- **Normal** — the detailed Awake/REM/Light/Deep breakdown, including a
+  fragmented micro-arousal cluster that exercises the minimum-bar-width
   clamp, plus a second chart with two separate sleep sessions (a real gap
   in `segments` between them, not an `awake` segment).
-- `asleep_page.dart` — the coarse `asleep` fallback, with no `stageStyles`
-  entry for it at all (relies on the built-in default).
-- `in_bed_page.dart` — `inBed` on its own, with no other stage types and no
+- **Asleep** — the coarse `asleep` fallback, with no `stageStyles` entry
+  for it at all (relies on the built-in default).
+- **In Bed** — `inBed` on its own, with no other stage types and no
   `stageStyles` override at all.
-
-`shared.dart` holds the tooltip config and small helpers reused across all
-three pages.
 
 ## Customization Tips
 
