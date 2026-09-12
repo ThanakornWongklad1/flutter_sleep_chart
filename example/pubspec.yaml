@@ -1,5 +1,5 @@
-name: hypnogram_chart_example
-description: "Example app for hypnogram_chart."
+name: flutter_sleep_chart_example
+description: "Example app for flutter_sleep_chart."
 publish_to: 'none'
 version: 0.0.1
 
@@ -9,7 +9,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  hypnogram_chart:
+  flutter_sleep_chart:
     path: ../
 
 dev_dependencies:

@@ -1,9 +1,9 @@
-# hypnogram_chart
+# flutter_sleep_chart
 
 A lightweight, dependency-free Flutter widget that renders an Apple
 Health-style sleep stage chart from a list of sleep stage segments.
 
-![hypnogram_chart example](https://raw.githubusercontent.com/ThanakornWongklad1/hypnogram_chart/main/screenshots/example.png)
+![flutter_sleep_chart example](https://raw.githubusercontent.com/ThanakornWongklad1/flutter_sleep_chart/main/screenshots/example.png)
 
 ## Features
 
@@ -32,13 +32,13 @@ Add to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  hypnogram_chart: ^<latest_version>
+  flutter_sleep_chart: ^<latest_version>
 ```
 
 Import the package:
 
 ```dart
-import 'package:hypnogram_chart/hypnogram_chart.dart';
+import 'package:flutter_sleep_chart/flutter_sleep_chart.dart';
 ```
 
 ## Usage
@@ -279,7 +279,7 @@ List<SleepStageSegment> generateSleepData() {
 
 ```dart
 import 'package:flutter/material.dart';
-import 'package:hypnogram_chart/hypnogram_chart.dart';
+import 'package:flutter_sleep_chart/flutter_sleep_chart.dart';
 
 void main() => runApp(const ExampleApp());
 
@@ -290,7 +290,7 @@ class ExampleApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       home: Scaffold(
-        appBar: AppBar(title: const Text('hypnogram_chart example')),
+        appBar: AppBar(title: const Text('flutter_sleep_chart example')),
         body: Builder(
           builder: (context) {
             const stageStyles = {

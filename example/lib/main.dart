@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:hypnogram_chart/hypnogram_chart.dart';
+import 'package:flutter_sleep_chart/flutter_sleep_chart.dart';
 
 void main() => runApp(const ExampleApp());
 
@@ -86,7 +86,7 @@ class ExampleApp extends StatelessWidget {
 
     return MaterialApp(
       home: Scaffold(
-        appBar: AppBar(title: const Text('hypnogram_chart example')),
+        appBar: AppBar(title: const Text('flutter_sleep_chart example')),
         body: Builder(
           builder: (context) => Padding(
             padding: const EdgeInsets.all(16),

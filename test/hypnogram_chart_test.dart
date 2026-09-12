@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hypnogram_chart/hypnogram_chart.dart';
+import 'package:flutter_sleep_chart/flutter_sleep_chart.dart';
 
 // Mirrors the widget's internal row-label column width, so taps land on an
 // exact point in time rather than an approximate fraction of the raw
