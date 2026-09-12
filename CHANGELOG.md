@@ -1,3 +1,21 @@
+## 0.2.0
+
+* Added `onSegmentTap` — called with the segment under the pointer on every
+  pointer-down.
+* Added `showTimeAxis`/`timeAxisHeight` for hour-aligned clock labels below
+  the chart.
+* Added `showRowGridLines`/`showTimeGridLines`/`gridLineColor` for optional
+  row-divider and hourly grid lines.
+* Added `HypnogramLegend`, a standalone color-dot + label legend widget for
+  a `stageStyles` map.
+* Added `interactionMode` (`HypnogramInteractionMode.scrub` (default) or
+  `.tap`) — `.tap` ignores pointer-move so the chart doesn't fight a
+  scrollable/draggable parent.
+* Added `enableAnimation`/`animationDuration`/`animationCurve` — bars now
+  animate in on first render and whenever `segments` changes (on by
+  default).
+* Added `emptyBuilder` for a custom placeholder when `segments` is empty.
+
 ## 0.1.0
 
 * **Breaking:** replaced the `colors`/`stageOrder`/`labels` maps with a

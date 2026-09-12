@@ -19,6 +19,11 @@ Health-style sleep stage chart from a list of sleep stage segments.
   stage-colored dot, and a dashed vertical guide line
 - Fully configurable per-stage colors, labels, and row heights
 - Fully configurable tooltip content and style, or swap in your own widget
+- `onSegmentTap` callback, an optional hour-aligned time axis, optional row
+  and time grid lines, and a `.tap`-only interaction mode for use inside
+  scrollable/draggable parents
+- Bars animate in on first render and whenever `segments` changes
+- A standalone `HypnogramLegend` widget for the same `stageStyles` map
 - No dependencies beyond Flutter itself
 
 ## Getting started
@@ -96,6 +101,48 @@ HypnogramChart(
 
 Set `enableTooltip: false` to disable the scrub tooltip entirely.
 
+### Time Axis, Grid Lines, Tap Callback, and Legend
+
+```dart
+HypnogramChart(
+  segments: segments,
+  onSegmentTap: (segment) => print('Tapped ${segment.type}'),
+  showTimeAxis: true,
+  showRowGridLines: true,
+  showTimeGridLines: true,
+  // Ignore drag/hover-move — only pointer-down selects a segment. Use this
+  // if the chart sits inside a horizontally scrollable/draggable parent.
+  interactionMode: HypnogramInteractionMode.tap,
+)
+```
+
+`HypnogramLegend` reads the same `stageStyles` map, for composing a legend
+outside the chart:
+
+```dart
+Column(
+  children: [
+    HypnogramChart(segments: segments, stageStyles: myStyles),
+    HypnogramLegend(stageStyles: myStyles),
+  ],
+)
+```
+
+### Animation
+
+Bars animate in on first render and whenever `segments` changes:
+
+```dart
+HypnogramChart(
+  segments: segments,
+  enableAnimation: true, // default
+  animationDuration: const Duration(milliseconds: 450),
+  animationCurve: Curves.easeOutCubic,
+)
+```
+
+Set `enableAnimation: false` to render instantly instead.
+
 ## Parameters
 
 ### `HypnogramChart`
@@ -111,6 +158,17 @@ Set `enableTooltip: false` to disable the scrub tooltip entirely.
 | `labelColumnWidth` | Width reserved on the left for row labels | `64` | No |
 | `enableTooltip` | Whether hover/tap/drag shows the scrub tooltip, guide line, and dot | `true` | No |
 | `tooltip` | Content and style for the scrub tooltip — see `HypnogramTooltipConfig` below | `HypnogramTooltipConfig()` | No |
+| `interactionMode` | `scrub` (hover/tap/drag all update live) or `tap` (only pointer-down does) — see `HypnogramInteractionMode` below | `HypnogramInteractionMode.scrub` | No |
+| `onSegmentTap` | Called with the segment under the pointer on every pointer-down | `null` | No |
+| `showTimeAxis` | Shows hour-aligned clock labels below the chart | `false` | No |
+| `timeAxisHeight` | Height reserved for `showTimeAxis`'s labels | `20` | No |
+| `showRowGridLines` | Draws a horizontal divider line above each stage row | `false` | No |
+| `showTimeGridLines` | Draws a vertical line at each hour-aligned tick | `false` | No |
+| `gridLineColor` | Color for the grid lines above | `null` (→ faint tint of the text color) | No |
+| `emptyBuilder` | Widget shown in place of the chart when `segments` is empty | `null` (→ blank box) | No |
+| `enableAnimation` | Whether bars animate in on first render and on `segments` change | `true` | No |
+| `animationDuration` | Duration of the reveal animation | `Duration(milliseconds: 450)` | No |
+| `animationCurve` | Easing curve of the reveal animation | `Curves.easeOutCubic` | No |
 | `haloBackground` | Base color each stage's halo is blended toward (32% stage color / 68% this) | `null` (→ `ColorScheme.surface`) | No |
 
 ### `StageStyle`
@@ -136,6 +194,23 @@ Set `enableTooltip: false` to disable the scrub tooltip entirely.
 | `borderRadius` | Corner radius of the bubble | `BorderRadius.circular(8)` | No |
 | `shadow` | Drop shadow under the bubble. Pass `null` or `[]` to remove it | one soft shadow (16px blur, `(0, 6)` offset) | No |
 | `showColorDot` | Whether the small stage-colored dot shows next to the stage-name line | `true` | No |
+
+### `HypnogramInteractionMode`
+
+| Value | Description |
+| :--- | :--- |
+| `scrub` | Hover, tap, and drag all continuously update the scrub tooltip/guide line. Default. |
+| `tap` | Only a pointer-down sets the scrub tooltip/guide line — moving the pointer afterward does not. Use inside a scrollable/draggable parent that would otherwise fight continuous move-tracking. |
+
+### `HypnogramLegend`
+
+| Parameter | Description | Default | Required |
+| :--- | :--- | :--- | :--- |
+| `stageStyles` | Same map passed to `HypnogramChart` — one color dot + label per entry | `kDefaultHypnogramStageStyles` | No |
+| `direction` | Lay the legend out as a row or column | `Axis.horizontal` | No |
+| `spacing` | Space between entries | `12` | No |
+| `dotSize` | Diameter of each color dot | `10` | No |
+| `labelStyle` | Text style for labels | `null` (→ 12px, `ColorScheme.onSurfaceVariant`) | No |
 
 ## Data Structure
 
@@ -193,6 +268,12 @@ List<SleepStageSegment> generateSleepData() {
    `labelText`/`timeRangeText`/`durationText`/style fields are ignored.
 6. **Interaction**: Works via hover (desktop/web), tap, or press-and-drag
    (touch) — no separate touch-vs-mouse configuration needed.
+7. **Time axis / grid ticks**: Always hour-aligned (e.g. 11 PM, 12 AM, 1 AM),
+   not evenly spaced by count — a short-range chart may show only one or two
+   ticks, a multi-day one may show many.
+8. **`onSegmentTap`**: Fires on every pointer-down, independent of
+   `enableTooltip` and `interactionMode` — it fires even with the tooltip
+   disabled or in `.tap` mode.
 
 ## Example App
 
@@ -210,21 +291,39 @@ class ExampleApp extends StatelessWidget {
     return MaterialApp(
       home: Scaffold(
         appBar: AppBar(title: const Text('hypnogram_chart example')),
-        body: Padding(
-          padding: const EdgeInsets.all(16),
-          child: HypnogramChart(
-            segments: generateSleepData(),
-            stageStyles: const {
+        body: Builder(
+          builder: (context) {
+            const stageStyles = {
               SleepStageType.awake: StageStyle(color: Color(0xFFE0729C), label: 'Awake'),
               SleepStageType.rem: StageStyle(color: Color(0xFF8E6BD9), label: 'REM'),
               SleepStageType.light: StageStyle(color: Color(0xFF4F8FE8), label: 'Light'),
               SleepStageType.deep: StageStyle(color: Color(0xFF1F2B6B), label: 'Deep', rowHeight: 52),
-            },
-            tooltip: HypnogramTooltipConfig(
-              backgroundColor: const Color(0xFF1A1A2E),
-              durationText: (s) => '${s.duration.inMinutes} min',
-            ),
-          ),
+            };
+            return Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  HypnogramChart(
+                    segments: generateSleepData(),
+                    stageStyles: stageStyles,
+                    showTimeAxis: true,
+                    onSegmentTap: (segment) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Tapped ${segment.type}')),
+                      );
+                    },
+                    tooltip: HypnogramTooltipConfig(
+                      backgroundColor: const Color(0xFF1A1A2E),
+                      durationText: (s) => '${s.duration.inMinutes} min',
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const HypnogramLegend(stageStyles: stageStyles),
+                ],
+              ),
+            );
+          },
         ),
       ),
     );
@@ -248,6 +347,10 @@ fragmented micro-arousal cluster that exercises the minimum-bar-width clamp.
   than stage/time/duration — e.g. adding an icon or a secondary metric.
 - **Accessibility**: Ensure sufficient color contrast between stages, and
   between `labelStyle`/`detailStyle` and your chosen `backgroundColor`.
+- **Inside a scrollable parent**: Use `interactionMode: HypnogramInteractionMode.tap`
+  so scrubbing doesn't fight the parent's own drag/scroll gesture.
+- **Disable animation for tests/goldens**: Set `enableAnimation: false` for
+  deterministic first-frame output.
 
 ## Requirements
 

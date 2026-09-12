@@ -38,6 +38,19 @@ String _formatDuration(Duration d) {
   return (h > 0 ? '${h}h ' : '') + '${m}m';
 }
 
+/// Hour-aligned tick times within `[start, end]`, for the time axis and
+/// vertical grid lines.
+List<DateTime> _hourTicks(DateTime start, DateTime end) {
+  var t = DateTime(start.year, start.month, start.day, start.hour);
+  if (t.isBefore(start)) t = t.add(const Duration(hours: 1));
+  final ticks = <DateTime>[];
+  while (!t.isAfter(end)) {
+    ticks.add(t);
+    t = t.add(const Duration(hours: 1));
+  }
+  return ticks;
+}
+
 /// Per-row vertical layout, derived from `stageStyles` order and each
 /// stage's height override (or the chart's default `rowHeight`).
 typedef _RowLayout = ({
@@ -88,6 +101,39 @@ class HypnogramChart extends StatefulWidget {
   /// Content and styling for the scrub tooltip.
   final HypnogramTooltipConfig tooltip;
 
+  /// How the chart reacts to pointer input.
+  final HypnogramInteractionMode interactionMode;
+
+  /// Called with the segment under the pointer on every pointer-down
+  /// (tap, or the start of a drag).
+  final void Function(SleepStageSegment segment)? onSegmentTap;
+
+  /// Shows hour-aligned clock labels below the chart.
+  final bool showTimeAxis;
+
+  /// Height reserved for [showTimeAxis]'s labels.
+  final double timeAxisHeight;
+
+  /// Draws a horizontal divider line above each stage row.
+  final bool showRowGridLines;
+
+  /// Draws a vertical line at each hour-aligned tick.
+  final bool showTimeGridLines;
+
+  /// Color for [showRowGridLines]/[showTimeGridLines]. Defaults to a faint
+  /// tint of the ambient text color.
+  final Color? gridLineColor;
+
+  /// Widget shown in place of the chart when [segments] is empty. Defaults
+  /// to a blank box sized to the chart's normal height.
+  final WidgetBuilder? emptyBuilder;
+
+  /// Whether bars animate in on first render and whenever [segments]
+  /// changes.
+  final bool enableAnimation;
+  final Duration animationDuration;
+  final Curve animationCurve;
+
   /// Base color the halo is blended toward (32% stage color, 68% this).
   /// Defaults to the ambient [ColorScheme.surface].
   final Color? haloBackground;
@@ -103,6 +149,17 @@ class HypnogramChart extends StatefulWidget {
     this.labelColumnWidth = 64,
     this.enableTooltip = true,
     this.tooltip = const HypnogramTooltipConfig(),
+    this.interactionMode = HypnogramInteractionMode.scrub,
+    this.onSegmentTap,
+    this.showTimeAxis = false,
+    this.timeAxisHeight = 20,
+    this.showRowGridLines = false,
+    this.showTimeGridLines = false,
+    this.gridLineColor,
+    this.emptyBuilder,
+    this.enableAnimation = true,
+    this.animationDuration = const Duration(milliseconds: 450),
+    this.animationCurve = Curves.easeOutCubic,
     this.haloBackground,
   });
 
@@ -110,8 +167,10 @@ class HypnogramChart extends StatefulWidget {
   State<HypnogramChart> createState() => _HypnogramChartState();
 }
 
-class _HypnogramChartState extends State<HypnogramChart> {
+class _HypnogramChartState extends State<HypnogramChart>
+    with SingleTickerProviderStateMixin {
   late List<SleepStageSegment> _merged;
+  late final AnimationController _revealController;
   Offset? _hoverLocal;
   SleepStageSegment? _hoverSeg;
 
@@ -119,6 +178,12 @@ class _HypnogramChartState extends State<HypnogramChart> {
   void initState() {
     super.initState();
     _merged = _mergeAdjacent(widget.segments);
+    _revealController = AnimationController(
+      vsync: this,
+      duration: widget.animationDuration,
+    );
+    _revealController.value = widget.enableAnimation ? 0 : 1;
+    if (widget.enableAnimation) _revealController.forward();
   }
 
   @override
@@ -128,10 +193,24 @@ class _HypnogramChartState extends State<HypnogramChart> {
       _merged = _mergeAdjacent(widget.segments);
       _hoverLocal = null;
       _hoverSeg = null;
+      _revealController.duration = widget.animationDuration;
+      if (widget.enableAnimation) {
+        _revealController.forward(from: 0);
+      } else {
+        _revealController.value = 1;
+      }
+    } else if (!widget.enableAnimation && old.enableAnimation) {
+      _revealController.value = 1;
     }
   }
 
-  void _updateHover(Offset local, double width) {
+  @override
+  void dispose() {
+    _revealController.dispose();
+    super.dispose();
+  }
+
+  void _updateHover(Offset local, double width, {bool isDown = false}) {
     if (_merged.isEmpty) return;
     final trackWidth = width - widget.labelColumnWidth;
     if (trackWidth <= 0) {
@@ -160,6 +239,9 @@ class _HypnogramChartState extends State<HypnogramChart> {
       _hoverLocal = local;
       _hoverSeg = found;
     });
+    if (isDown && found != null) {
+      widget.onSegmentTap?.call(found);
+    }
   }
 
   void _clearHover() {
@@ -173,13 +255,22 @@ class _HypnogramChartState extends State<HypnogramChart> {
   @override
   Widget build(BuildContext context) {
     final rowLayout = _layoutRows(widget.stageStyles, widget.rowHeight);
-    final totalHeight = rowLayout.totalHeight;
+    final chartHeight = rowLayout.totalHeight;
+    final totalHeight =
+        chartHeight + (widget.showTimeAxis ? widget.timeAxisHeight : 0);
     final haloBackground =
         widget.haloBackground ?? Theme.of(context).colorScheme.surface;
+    final textColor = Theme.of(context).colorScheme.onSurfaceVariant;
 
     if (widget.segments.isEmpty) {
-      return SizedBox(height: totalHeight, width: double.infinity);
+      return SizedBox(
+        height: totalHeight,
+        width: double.infinity,
+        child: widget.emptyBuilder?.call(context),
+      );
     }
+
+    final scrubbing = widget.interactionMode == HypnogramInteractionMode.scrub;
 
     return SizedBox(
       height: totalHeight,
@@ -190,28 +281,46 @@ class _HypnogramChartState extends State<HypnogramChart> {
           return MouseRegion(
             onExit: (_) => _clearHover(),
             child: Listener(
-              onPointerHover: (e) => _updateHover(e.localPosition, width),
-              onPointerDown: (e) => _updateHover(e.localPosition, width),
-              onPointerMove: (e) => _updateHover(e.localPosition, width),
+              onPointerHover: scrubbing
+                  ? (e) => _updateHover(e.localPosition, width)
+                  : null,
+              onPointerDown: (e) =>
+                  _updateHover(e.localPosition, width, isDown: true),
+              onPointerMove: scrubbing
+                  ? (e) => _updateHover(e.localPosition, width)
+                  : null,
               onPointerUp: (_) => _clearHover(),
               onPointerCancel: (_) => _clearHover(),
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  CustomPaint(
-                    size: Size(width, totalHeight),
-                    painter: _HypnogramPainter(
-                      segments: _merged,
-                      stageStyles: widget.stageStyles,
-                      rowLayout: rowLayout,
-                      barHeight: widget.barHeight,
-                      haloPad: widget.haloPad,
-                      minBarWidth: widget.minBarWidth,
-                      labelColumnWidth: widget.labelColumnWidth,
-                      haloBackground: haloBackground,
-                      textColor: Theme.of(context).colorScheme.onSurfaceVariant,
-                      hoverDx: _hoverLocal?.dx,
-                    ),
+                  AnimatedBuilder(
+                    animation: _revealController,
+                    builder: (context, _) {
+                      final revealProgress = widget.animationCurve.transform(
+                        _revealController.value,
+                      );
+                      return CustomPaint(
+                        size: Size(width, totalHeight),
+                        painter: _HypnogramPainter(
+                          segments: _merged,
+                          stageStyles: widget.stageStyles,
+                          rowLayout: rowLayout,
+                          barHeight: widget.barHeight,
+                          haloPad: widget.haloPad,
+                          minBarWidth: widget.minBarWidth,
+                          labelColumnWidth: widget.labelColumnWidth,
+                          haloBackground: haloBackground,
+                          textColor: textColor,
+                          hoverDx: _hoverLocal?.dx,
+                          showTimeAxis: widget.showTimeAxis,
+                          showRowGridLines: widget.showRowGridLines,
+                          showTimeGridLines: widget.showTimeGridLines,
+                          gridLineColor: widget.gridLineColor,
+                          revealProgress: revealProgress,
+                        ),
+                      );
+                    },
                   ),
                   if (widget.enableTooltip &&
                       _hoverSeg != null &&
@@ -228,19 +337,28 @@ class _HypnogramChartState extends State<HypnogramChart> {
                         child: widget.tooltip.builder != null
                             ? widget.tooltip.builder!(context, _hoverSeg!)
                             : _TooltipBubble(
-                                color: widget.stageStyles[_hoverSeg!.type]
+                                color:
+                                    widget
+                                        .stageStyles[_hoverSeg!.type]
                                         ?.color ??
                                     haloBackground,
-                                label: widget.tooltip.labelText
-                                        ?.call(_hoverSeg!) ??
-                                    widget.stageStyles[_hoverSeg!.type]
+                                label:
+                                    widget.tooltip.labelText?.call(
+                                      _hoverSeg!,
+                                    ) ??
+                                    widget
+                                        .stageStyles[_hoverSeg!.type]
                                         ?.label ??
                                     '',
-                                timeRange: widget.tooltip.timeRangeText
-                                        ?.call(_hoverSeg!) ??
+                                timeRange:
+                                    widget.tooltip.timeRangeText?.call(
+                                      _hoverSeg!,
+                                    ) ??
                                     '${_formatClock(_hoverSeg!.start)} – ${_formatClock(_hoverSeg!.end)}',
-                                duration: widget.tooltip.durationText
-                                        ?.call(_hoverSeg!) ??
+                                duration:
+                                    widget.tooltip.durationText?.call(
+                                      _hoverSeg!,
+                                    ) ??
                                     _formatDuration(_hoverSeg!.duration),
                                 config: widget.tooltip,
                               ),
@@ -267,6 +385,11 @@ class _HypnogramPainter extends CustomPainter {
   final Color haloBackground;
   final Color textColor;
   final double? hoverDx;
+  final bool showTimeAxis;
+  final bool showRowGridLines;
+  final bool showTimeGridLines;
+  final Color? gridLineColor;
+  final double revealProgress;
 
   _HypnogramPainter({
     required this.segments,
@@ -279,6 +402,11 @@ class _HypnogramPainter extends CustomPainter {
     required this.haloBackground,
     required this.textColor,
     required this.hoverDx,
+    required this.showTimeAxis,
+    required this.showRowGridLines,
+    required this.showTimeGridLines,
+    required this.gridLineColor,
+    required this.revealProgress,
   });
 
   double _rowCenterY(SleepStageType type) {
@@ -297,7 +425,47 @@ class _HypnogramPainter extends CustomPainter {
     final totalMicros = rangeEnd.difference(rangeStart).inMicroseconds;
     if (totalMicros <= 0) return;
 
+    final chartHeight = rowLayout.totalHeight;
     final trackWidth = size.width - labelColumnWidth;
+
+    double xOf(DateTime t) =>
+        labelColumnWidth +
+        t.difference(rangeStart).inMicroseconds / totalMicros * trackWidth;
+
+    final gridColor = gridLineColor ?? textColor.withValues(alpha: 0.08);
+
+    if (showRowGridLines) {
+      final gridPaint = Paint()
+        ..color = gridColor
+        ..strokeWidth = 1;
+      for (final type in rowLayout.order) {
+        final top = rowLayout.top[type]!;
+        canvas.drawLine(
+          Offset(labelColumnWidth, top),
+          Offset(size.width, top),
+          gridPaint,
+        );
+      }
+      canvas.drawLine(
+        Offset(labelColumnWidth, chartHeight),
+        Offset(size.width, chartHeight),
+        gridPaint,
+      );
+    }
+
+    final ticks = (showTimeGridLines || showTimeAxis)
+        ? _hourTicks(rangeStart, rangeEnd)
+        : const <DateTime>[];
+
+    if (showTimeGridLines) {
+      final gridPaint = Paint()
+        ..color = gridColor
+        ..strokeWidth = 1;
+      for (final t in ticks) {
+        final x = xOf(t);
+        canvas.drawLine(Offset(x, 0), Offset(x, chartHeight), gridPaint);
+      }
+    }
 
     // Row labels.
     for (final type in rowLayout.order) {
@@ -317,10 +485,6 @@ class _HypnogramPainter extends CustomPainter {
       tp.paint(canvas, Offset(labelColumnWidth - 12 - tp.width, y));
     }
 
-    double xOf(DateTime t) =>
-        labelColumnWidth +
-        t.difference(rangeStart).inMicroseconds / totalMicros * trackWidth;
-
     // Halos + bars.
     for (final seg in segments) {
       final naturalLeft = xOf(seg.start);
@@ -334,6 +498,7 @@ class _HypnogramPainter extends CustomPainter {
         left = naturalLeft;
         width = naturalWidth;
       }
+      width *= revealProgress;
 
       final centerY = _rowCenterY(seg.type);
       final barRect = Rect.fromLTWH(
@@ -346,13 +511,18 @@ class _HypnogramPainter extends CustomPainter {
       final stageColor = stageStyles[seg.type]?.color ?? haloBackground;
 
       final haloPaint = Paint()
-        ..color = Color.lerp(stageColor, haloBackground, 0.68)!;
+        ..color = Color.lerp(
+          stageColor,
+          haloBackground,
+          0.68,
+        )!.withValues(alpha: revealProgress);
       canvas.drawRRect(
         RRect.fromRectAndRadius(haloRect, const Radius.circular(6)),
         haloPaint,
       );
 
-      final barPaint = Paint()..color = stageColor;
+      final barPaint = Paint()
+        ..color = stageColor.withValues(alpha: revealProgress);
       canvas.drawRRect(
         RRect.fromRectAndRadius(barRect, const Radius.circular(5)),
         barPaint,
@@ -375,8 +545,8 @@ class _HypnogramPainter extends CustomPainter {
         Offset(x2, y2),
         [
           fromColor.withValues(alpha: 0),
-          fromColor.withValues(alpha: 0.25),
-          toColor.withValues(alpha: 0.25),
+          fromColor.withValues(alpha: 0.25 * revealProgress),
+          toColor.withValues(alpha: 0.25 * revealProgress),
           toColor.withValues(alpha: 0),
         ],
         [0, 0.2, 0.8, 1.0],
@@ -389,6 +559,22 @@ class _HypnogramPainter extends CustomPainter {
       canvas.drawLine(Offset(x1, y1), Offset(x2, y2), paint);
     }
 
+    // Time axis labels.
+    if (showTimeAxis) {
+      for (final t in ticks) {
+        final tp = TextPainter(
+          text: TextSpan(
+            text: _formatClock(t),
+            style: TextStyle(color: textColor, fontSize: 10),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        var tx = xOf(t) - tp.width / 2;
+        tx = tx.clamp(labelColumnWidth, size.width - tp.width);
+        tp.paint(canvas, Offset(tx, chartHeight + 4));
+      }
+    }
+
     // Scrub guide line + dot.
     final dx = hoverDx;
     if (dx != null && dx >= labelColumnWidth && dx <= size.width) {
@@ -398,14 +584,14 @@ class _HypnogramPainter extends CustomPainter {
       _drawDashedLine(
         canvas,
         Offset(dx, 0),
-        Offset(dx, size.height),
+        Offset(dx, chartHeight),
         guidePaint,
       );
 
       final t = rangeStart.add(
         Duration(
-          microseconds:
-              ((dx - labelColumnWidth) / trackWidth * totalMicros).round(),
+          microseconds: ((dx - labelColumnWidth) / trackWidth * totalMicros)
+              .round(),
         ),
       );
       SleepStageSegment? active;
@@ -434,11 +620,7 @@ class _HypnogramPainter extends CustomPainter {
     var traveled = 0.0;
     while (traveled < total) {
       final segEnd = (traveled + dashLength).clamp(0.0, total);
-      canvas.drawLine(
-        a + direction * traveled,
-        a + direction * segEnd,
-        paint,
-      );
+      canvas.drawLine(a + direction * traveled, a + direction * segEnd, paint);
       traveled += dashLength + gapLength;
     }
   }
@@ -449,7 +631,12 @@ class _HypnogramPainter extends CustomPainter {
         stageStyles != oldDelegate.stageStyles ||
         rowLayout != oldDelegate.rowLayout ||
         haloBackground != oldDelegate.haloBackground ||
-        hoverDx != oldDelegate.hoverDx;
+        hoverDx != oldDelegate.hoverDx ||
+        showTimeAxis != oldDelegate.showTimeAxis ||
+        showRowGridLines != oldDelegate.showRowGridLines ||
+        showTimeGridLines != oldDelegate.showTimeGridLines ||
+        gridLineColor != oldDelegate.gridLineColor ||
+        revealProgress != oldDelegate.revealProgress;
   }
 }
 
@@ -504,9 +691,11 @@ class _TooltipBubble extends StatelessWidget {
     final ink =
         config.backgroundColor ?? Theme.of(context).colorScheme.inverseSurface;
     final onInk = Theme.of(context).colorScheme.onInverseSurface;
-    final labelStyle = config.labelStyle ??
+    final labelStyle =
+        config.labelStyle ??
         TextStyle(color: onInk, fontWeight: FontWeight.w700, fontSize: 12);
-    final detailStyle = config.detailStyle ??
+    final detailStyle =
+        config.detailStyle ??
         TextStyle(color: onInk.withValues(alpha: 0.85), fontSize: 11);
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -528,8 +717,10 @@ class _TooltipBubble extends StatelessWidget {
                     width: 8,
                     height: 8,
                     margin: const EdgeInsets.only(right: 6),
-                    decoration:
-                        BoxDecoration(color: color, shape: BoxShape.circle),
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                    ),
                   ),
                 Text(label, style: labelStyle),
               ],

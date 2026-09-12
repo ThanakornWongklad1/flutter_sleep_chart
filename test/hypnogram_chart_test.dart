@@ -64,7 +64,9 @@ void main() {
     expect(find.byType(HypnogramChart), findsOneWidget);
   });
 
-  testWidgets('shows a tooltip with stage/time/duration while held', (tester) async {
+  testWidgets('shows a tooltip with stage/time/duration while held', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(body: HypnogramChart(segments: segments)),
@@ -79,7 +81,9 @@ void main() {
     // range. Use a held gesture (not a quick tap) since the tooltip is
     // designed to hide again on pointer-up.
     final dx = _dxForFraction(65 / 120, size.width);
-    final gesture = await tester.startGesture(topLeft + Offset(dx, size.height * 0.5));
+    final gesture = await tester.startGesture(
+      topLeft + Offset(dx, size.height * 0.5),
+    );
     await tester.pump();
 
     expect(find.text('Deep'), findsOneWidget);
@@ -101,11 +105,135 @@ void main() {
     // Midpoint of the merged 90-120min light span is 105/120 through the
     // range — tooltip should report the combined 30m duration, not 10m/20m.
     final dx = _dxForFraction(105 / 120, size.width);
-    final gesture = await tester.startGesture(topLeft + Offset(dx, size.height * 0.5));
+    final gesture = await tester.startGesture(
+      topLeft + Offset(dx, size.height * 0.5),
+    );
     await tester.pump();
 
     expect(find.textContaining('30m'), findsOneWidget);
 
     await gesture.up();
+  });
+
+  testWidgets('onSegmentTap fires with the segment under the pointer', (
+    tester,
+  ) async {
+    SleepStageSegment? tapped;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HypnogramChart(
+            segments: segments,
+            onSegmentTap: (s) => tapped = s,
+          ),
+        ),
+      ),
+    );
+
+    final chartFinder = find.byType(HypnogramChart);
+    final topLeft = tester.getTopLeft(chartFinder);
+    final size = tester.getSize(chartFinder);
+
+    final dx = _dxForFraction(65 / 120, size.width);
+    final gesture = await tester.startGesture(
+      topLeft + Offset(dx, size.height * 0.5),
+    );
+    await tester.pump();
+
+    expect(tapped?.type, SleepStageType.deep);
+
+    await gesture.up();
+  });
+
+  testWidgets('tap interaction mode ignores drag after the initial down', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HypnogramChart(
+            segments: segments,
+            interactionMode: HypnogramInteractionMode.tap,
+          ),
+        ),
+      ),
+    );
+
+    final chartFinder = find.byType(HypnogramChart);
+    final topLeft = tester.getTopLeft(chartFinder);
+    final size = tester.getSize(chartFinder);
+
+    final deepDx = _dxForFraction(65 / 120, size.width);
+    final lightDx = _dxForFraction(105 / 120, size.width);
+    final gesture = await tester.startGesture(
+      topLeft + Offset(deepDx, size.height * 0.5),
+    );
+    await tester.pump();
+    expect(find.text('Deep'), findsOneWidget);
+
+    await gesture.moveTo(topLeft + Offset(lightDx, size.height * 0.5));
+    await tester.pump();
+    // Move is ignored in tap mode — tooltip stays on the original segment.
+    expect(find.text('Deep'), findsOneWidget);
+    expect(find.text('Light'), findsNothing);
+
+    await gesture.up();
+  });
+
+  testWidgets('reserves extra height for the time axis when enabled', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HypnogramChart(segments: segments, enableAnimation: false),
+        ),
+      ),
+    );
+    final withoutAxis = tester.getSize(find.byType(HypnogramChart)).height;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HypnogramChart(
+            segments: segments,
+            enableAnimation: false,
+            showTimeAxis: true,
+            timeAxisHeight: 20,
+            showRowGridLines: true,
+            showTimeGridLines: true,
+          ),
+        ),
+      ),
+    );
+    final withAxis = tester.getSize(find.byType(HypnogramChart)).height;
+
+    expect(withAxis, withoutAxis + 20);
+  });
+
+  testWidgets('emptyBuilder renders a custom placeholder', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HypnogramChart(
+            segments: const [],
+            emptyBuilder: (context) => const Text('No sleep data'),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('No sleep data'), findsOneWidget);
+  });
+
+  testWidgets('HypnogramLegend renders one label per stage', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: HypnogramLegend())),
+    );
+
+    expect(find.text('Awake'), findsOneWidget);
+    expect(find.text('REM'), findsOneWidget);
+    expect(find.text('Light'), findsOneWidget);
+    expect(find.text('Deep'), findsOneWidget);
   });
 }

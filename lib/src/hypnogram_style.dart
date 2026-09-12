@@ -33,7 +33,7 @@ const kDefaultHypnogramStageStyles = <SleepStageType, StageStyle>{
 /// duration), and the remaining fields style the default bubble.
 class HypnogramTooltipConfig {
   final Widget Function(BuildContext context, SleepStageSegment segment)?
-      builder;
+  builder;
   final String Function(SleepStageSegment segment)? labelText;
   final String Function(SleepStageSegment segment)? timeRangeText;
   final String Function(SleepStageSegment segment)? durationText;
@@ -61,4 +61,70 @@ class HypnogramTooltipConfig {
     ],
     this.showColorDot = true,
   });
+}
+
+/// How [HypnogramChart] reacts to pointer input.
+enum HypnogramInteractionMode {
+  /// Hover, tap, and drag all continuously update the scrub tooltip/guide
+  /// line as the pointer moves. The default.
+  scrub,
+
+  /// Only a pointer-down sets the scrub tooltip/guide line; moving the
+  /// pointer afterward does not. Useful when the chart sits inside a
+  /// scrollable or draggable parent and continuous move-tracking would
+  /// fight it.
+  tap,
+}
+
+/// A standalone legend for a [HypnogramChart]'s [StageStyle] map — a
+/// color dot + label per stage, for composing outside the chart itself.
+class HypnogramLegend extends StatelessWidget {
+  final Map<SleepStageType, StageStyle> stageStyles;
+  final Axis direction;
+  final double spacing;
+  final double dotSize;
+  final TextStyle? labelStyle;
+
+  const HypnogramLegend({
+    super.key,
+    this.stageStyles = kDefaultHypnogramStageStyles,
+    this.direction = Axis.horizontal,
+    this.spacing = 12,
+    this.dotSize = 10,
+    this.labelStyle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final style =
+        labelStyle ??
+        TextStyle(
+          fontSize: 12,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        );
+    return Wrap(
+      direction: direction,
+      spacing: spacing,
+      runSpacing: spacing / 2,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        for (final entry in stageStyles.entries)
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: dotSize,
+                height: dotSize,
+                decoration: BoxDecoration(
+                  color: entry.value.color,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(entry.value.label, style: style),
+            ],
+          ),
+      ],
+    );
+  }
 }
