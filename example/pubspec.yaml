@@ -1,0 +1,21 @@
+name: hypnogram_chart_example
+description: "Example app for hypnogram_chart."
+publish_to: 'none'
+version: 0.0.1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  hypnogram_chart:
+    path: ../
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
