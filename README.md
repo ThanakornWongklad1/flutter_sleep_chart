@@ -3,7 +3,8 @@
 A lightweight, dependency-free Flutter widget that renders an Apple
 Health-style sleep stage chart from a list of sleep stage segments.
 
-![flutter_sleep_chart example](https://raw.githubusercontent.com/ThanakornWongklad1/flutter_sleep_chart/main/screenshots/example.png)
+
+<img alt="example usage" width="300" src="https://raw.githubusercontent.com/ThanakornWongklad1/flutter_sleep_chart/main/screenshots/example.png">
 
 ## Features
 
