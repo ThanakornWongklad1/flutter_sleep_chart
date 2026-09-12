@@ -55,7 +55,7 @@ class ExampleApp extends StatelessWidget {
               SleepStageType.deep: StageStyle(
                 color: Color(0xFF1F2B6B),
                 label: 'Deepest',
-                rowHeight: 52,
+                // rowHeight: 52,
               ),
             },
             tooltip: HypnogramTooltipConfig(

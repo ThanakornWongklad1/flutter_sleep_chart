@@ -1,7 +1,14 @@
 name: hypnogram_chart
 description: "A lightweight, dependency-free Apple Health-style sleep stage chart widget for Flutter."
 version: 0.1.0
-homepage:
+homepage: https://github.com/ThanakornWongklad1/hypnogram_chart
+repository: https://github.com/ThanakornWongklad1/hypnogram_chart
+issue_tracker: https://github.com/ThanakornWongklad1/hypnogram_chart/issues
+topics:
+  - chart
+  - sleep
+  - health
+  - widget
 
 environment:
   sdk: ^3.12.2
