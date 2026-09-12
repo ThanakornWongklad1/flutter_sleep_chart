@@ -36,7 +36,33 @@ class ExampleApp extends StatelessWidget {
         appBar: AppBar(title: const Text('hypnogram_chart example')),
         body: Padding(
           padding: const EdgeInsets.all(16),
-          child: HypnogramChart(segments: segments),
+          child: HypnogramChart(
+            segments: segments,
+            // Custom per-stage colors/labels, with a taller Deep row.
+            stageStyles: const {
+              SleepStageType.awake: StageStyle(
+                color: Color(0xFFE0729C),
+                label: 'Awake',
+              ),
+              SleepStageType.rem: StageStyle(
+                color: Color(0xFF8E6BD9),
+                label: 'REM',
+              ),
+              SleepStageType.light: StageStyle(
+                color: Color(0xFF4F8FE8),
+                label: 'Light',
+              ),
+              SleepStageType.deep: StageStyle(
+                color: Color(0xFF1F2B6B),
+                label: 'Deepest',
+                rowHeight: 52,
+              ),
+            },
+            tooltip: HypnogramTooltipConfig(
+              backgroundColor: const Color(0xFF1A1A2E),
+              durationText: (s) => '${s.duration.inMinutes} min',
+            ),
+          ),
         ),
       ),
     );

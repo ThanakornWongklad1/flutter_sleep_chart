@@ -2,33 +2,10 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import 'hypnogram_style.dart';
 import 'sleep_stage.dart';
 
-/// Default stage -> color mapping.
-const kDefaultHypnogramColors = <SleepStageType, Color>{
-  SleepStageType.awake: Color(0xFFF2994A),
-  SleepStageType.rem: Color(0xFF9B6BD9),
-  SleepStageType.light: Color(0xFF4F8FE8),
-  SleepStageType.deep: Color(0xFF2C3E8C),
-};
-
-/// Default vertical order, top to bottom: awake, rem, light, deep.
-const kDefaultHypnogramOrder = <SleepStageType, int>{
-  SleepStageType.awake: 0,
-  SleepStageType.rem: 1,
-  SleepStageType.light: 2,
-  SleepStageType.deep: 3,
-};
-
-/// Default row labels.
-const kDefaultHypnogramLabels = <SleepStageType, String>{
-  SleepStageType.awake: 'Awake',
-  SleepStageType.rem: 'REM',
-  SleepStageType.light: 'Light',
-  SleepStageType.deep: 'Deep',
-};
-
-const _trackLeftPx = 64.0;
+export 'hypnogram_style.dart';
 
 List<SleepStageSegment> _mergeAdjacent(List<SleepStageSegment> segments) {
   final out = <SleepStageSegment>[];
@@ -61,19 +38,55 @@ String _formatDuration(Duration d) {
   return (h > 0 ? '${h}h ' : '') + '${m}m';
 }
 
+/// Per-row vertical layout, derived from `stageStyles` order and each
+/// stage's height override (or the chart's default `rowHeight`).
+typedef _RowLayout = ({
+  List<SleepStageType> order,
+  Map<SleepStageType, double> top,
+  Map<SleepStageType, double> height,
+  double totalHeight,
+});
+
+_RowLayout _layoutRows(
+  Map<SleepStageType, StageStyle> stageStyles,
+  double defaultRowHeight,
+) {
+  final order = stageStyles.keys.toList();
+  final top = <SleepStageType, double>{};
+  final height = <SleepStageType, double>{};
+  var y = 0.0;
+  for (final type in order) {
+    final h = stageStyles[type]?.rowHeight ?? defaultRowHeight;
+    top[type] = y;
+    height[type] = h;
+    y += h;
+  }
+  return (order: order, top: top, height: height, totalHeight: y);
+}
+
 /// An Apple Health-style hypnogram: one glassy-halo bar row per stage, with
 /// gradient connectors between transitions and a scrub tooltip on
 /// hover/tap/drag.
 class HypnogramChart extends StatefulWidget {
   final List<SleepStageSegment> segments;
-  final Map<SleepStageType, Color> colors;
-  final Map<SleepStageType, int> stageOrder;
-  final Map<SleepStageType, String> labels;
+
+  /// Color, label, and optional row-height override per stage. Row order
+  /// (top to bottom) follows this map's iteration order.
+  final Map<SleepStageType, StageStyle> stageStyles;
+
+  /// Default row height for stages that don't set their own in
+  /// [StageStyle.rowHeight].
   final double rowHeight;
   final double barHeight;
   final double haloPad;
   final double minBarWidth;
+
+  /// Width of the left-hand stage-label column.
+  final double labelColumnWidth;
   final bool enableTooltip;
+
+  /// Content and styling for the scrub tooltip.
+  final HypnogramTooltipConfig tooltip;
 
   /// Base color the halo is blended toward (32% stage color, 68% this).
   /// Defaults to the ambient [ColorScheme.surface].
@@ -82,14 +95,14 @@ class HypnogramChart extends StatefulWidget {
   const HypnogramChart({
     super.key,
     required this.segments,
-    this.colors = kDefaultHypnogramColors,
-    this.stageOrder = kDefaultHypnogramOrder,
-    this.labels = kDefaultHypnogramLabels,
+    this.stageStyles = kDefaultHypnogramStageStyles,
     this.rowHeight = 40,
     this.barHeight = 20,
     this.haloPad = 2,
     this.minBarWidth = 1,
+    this.labelColumnWidth = 64,
     this.enableTooltip = true,
+    this.tooltip = const HypnogramTooltipConfig(),
     this.haloBackground,
   });
 
@@ -118,19 +131,14 @@ class _HypnogramChartState extends State<HypnogramChart> {
     }
   }
 
-  int get _rowCount {
-    if (widget.stageOrder.isEmpty) return 1;
-    return widget.stageOrder.values.reduce((a, b) => a > b ? a : b) + 1;
-  }
-
   void _updateHover(Offset local, double width) {
     if (_merged.isEmpty) return;
-    final trackWidth = width - _trackLeftPx;
+    final trackWidth = width - widget.labelColumnWidth;
     if (trackWidth <= 0) {
       _clearHover();
       return;
     }
-    final frac = (local.dx - _trackLeftPx) / trackWidth;
+    final frac = (local.dx - widget.labelColumnWidth) / trackWidth;
     if (frac < 0 || frac > 1) {
       _clearHover();
       return;
@@ -164,8 +172,8 @@ class _HypnogramChartState extends State<HypnogramChart> {
 
   @override
   Widget build(BuildContext context) {
-    final rowCount = _rowCount;
-    final totalHeight = widget.rowHeight * rowCount;
+    final rowLayout = _layoutRows(widget.stageStyles, widget.rowHeight);
+    final totalHeight = rowLayout.totalHeight;
     final haloBackground =
         widget.haloBackground ?? Theme.of(context).colorScheme.surface;
 
@@ -194,13 +202,12 @@ class _HypnogramChartState extends State<HypnogramChart> {
                     size: Size(width, totalHeight),
                     painter: _HypnogramPainter(
                       segments: _merged,
-                      colors: widget.colors,
-                      stageOrder: widget.stageOrder,
-                      labels: widget.labels,
-                      rowHeight: widget.rowHeight,
+                      stageStyles: widget.stageStyles,
+                      rowLayout: rowLayout,
                       barHeight: widget.barHeight,
                       haloPad: widget.haloPad,
                       minBarWidth: widget.minBarWidth,
+                      labelColumnWidth: widget.labelColumnWidth,
                       haloBackground: haloBackground,
                       textColor: Theme.of(context).colorScheme.onSurfaceVariant,
                       hoverDx: _hoverLocal?.dx,
@@ -213,18 +220,30 @@ class _HypnogramChartState extends State<HypnogramChart> {
                       child: CustomSingleChildLayout(
                         delegate: _TooltipLayoutDelegate(
                           _hoverLocal!.dx,
-                          (widget.stageOrder[_hoverSeg!.type] ?? 0) *
-                                  widget.rowHeight +
-                              widget.rowHeight / 2,
+                          (rowLayout.top[_hoverSeg!.type] ?? 0) +
+                              (rowLayout.height[_hoverSeg!.type] ??
+                                      widget.rowHeight) /
+                                  2,
                         ),
-                        child: _TooltipBubble(
-                          color: widget.colors[_hoverSeg!.type] ??
-                              haloBackground,
-                          label: widget.labels[_hoverSeg!.type] ?? '',
-                          timeRange:
-                              '${_formatClock(_hoverSeg!.start)} – ${_formatClock(_hoverSeg!.end)}',
-                          duration: _formatDuration(_hoverSeg!.duration),
-                        ),
+                        child: widget.tooltip.builder != null
+                            ? widget.tooltip.builder!(context, _hoverSeg!)
+                            : _TooltipBubble(
+                                color: widget.stageStyles[_hoverSeg!.type]
+                                        ?.color ??
+                                    haloBackground,
+                                label: widget.tooltip.labelText
+                                        ?.call(_hoverSeg!) ??
+                                    widget.stageStyles[_hoverSeg!.type]
+                                        ?.label ??
+                                    '',
+                                timeRange: widget.tooltip.timeRangeText
+                                        ?.call(_hoverSeg!) ??
+                                    '${_formatClock(_hoverSeg!.start)} – ${_formatClock(_hoverSeg!.end)}',
+                                duration: widget.tooltip.durationText
+                                        ?.call(_hoverSeg!) ??
+                                    _formatDuration(_hoverSeg!.duration),
+                                config: widget.tooltip,
+                              ),
                       ),
                     ),
                 ],
@@ -239,33 +258,35 @@ class _HypnogramChartState extends State<HypnogramChart> {
 
 class _HypnogramPainter extends CustomPainter {
   final List<SleepStageSegment> segments;
-  final Map<SleepStageType, Color> colors;
-  final Map<SleepStageType, int> stageOrder;
-  final Map<SleepStageType, String> labels;
-  final double rowHeight;
+  final Map<SleepStageType, StageStyle> stageStyles;
+  final _RowLayout rowLayout;
   final double barHeight;
   final double haloPad;
   final double minBarWidth;
+  final double labelColumnWidth;
   final Color haloBackground;
   final Color textColor;
   final double? hoverDx;
 
   _HypnogramPainter({
     required this.segments,
-    required this.colors,
-    required this.stageOrder,
-    required this.labels,
-    required this.rowHeight,
+    required this.stageStyles,
+    required this.rowLayout,
     required this.barHeight,
     required this.haloPad,
     required this.minBarWidth,
+    required this.labelColumnWidth,
     required this.haloBackground,
     required this.textColor,
     required this.hoverDx,
   });
 
-  double _rowCenterY(SleepStageType type) =>
-      (stageOrder[type] ?? 0) * rowHeight + rowHeight / 2;
+  double _rowCenterY(SleepStageType type) {
+    final top = rowLayout.top[type];
+    final height = rowLayout.height[type];
+    if (top == null || height == null) return 0;
+    return top + height / 2;
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -276,13 +297,13 @@ class _HypnogramPainter extends CustomPainter {
     final totalMicros = rangeEnd.difference(rangeStart).inMicroseconds;
     if (totalMicros <= 0) return;
 
-    final trackWidth = size.width - _trackLeftPx;
+    final trackWidth = size.width - labelColumnWidth;
 
     // Row labels.
-    for (final entry in stageOrder.entries) {
+    for (final type in rowLayout.order) {
       final tp = TextPainter(
         text: TextSpan(
-          text: labels[entry.key] ?? '',
+          text: stageStyles[type]?.label ?? '',
           style: TextStyle(
             color: textColor,
             fontSize: 11,
@@ -291,13 +312,13 @@ class _HypnogramPainter extends CustomPainter {
         ),
         textDirection: TextDirection.ltr,
         textAlign: TextAlign.right,
-      )..layout(maxWidth: _trackLeftPx - 12);
-      final y = _rowCenterY(entry.key) - tp.height / 2;
-      tp.paint(canvas, Offset(_trackLeftPx - 12 - tp.width, y));
+      )..layout(maxWidth: labelColumnWidth - 12);
+      final y = _rowCenterY(type) - tp.height / 2;
+      tp.paint(canvas, Offset(labelColumnWidth - 12 - tp.width, y));
     }
 
     double xOf(DateTime t) =>
-        _trackLeftPx +
+        labelColumnWidth +
         t.difference(rangeStart).inMicroseconds / totalMicros * trackWidth;
 
     // Halos + bars.
@@ -322,7 +343,7 @@ class _HypnogramPainter extends CustomPainter {
         barHeight,
       );
       final haloRect = barRect.inflate(haloPad);
-      final stageColor = colors[seg.type] ?? haloBackground;
+      final stageColor = stageStyles[seg.type]?.color ?? haloBackground;
 
       final haloPaint = Paint()
         ..color = Color.lerp(stageColor, haloBackground, 0.68)!;
@@ -346,8 +367,8 @@ class _HypnogramPainter extends CustomPainter {
       final x2 = xOf(to.start);
       final y1 = _rowCenterY(from.type);
       final y2 = _rowCenterY(to.type);
-      final fromColor = colors[from.type] ?? haloBackground;
-      final toColor = colors[to.type] ?? haloBackground;
+      final fromColor = stageStyles[from.type]?.color ?? haloBackground;
+      final toColor = stageStyles[to.type]?.color ?? haloBackground;
 
       final shader = ui.Gradient.linear(
         Offset(x1, y1),
@@ -370,7 +391,7 @@ class _HypnogramPainter extends CustomPainter {
 
     // Scrub guide line + dot.
     final dx = hoverDx;
-    if (dx != null && dx >= _trackLeftPx && dx <= size.width) {
+    if (dx != null && dx >= labelColumnWidth && dx <= size.width) {
       final guidePaint = Paint()
         ..color = textColor.withValues(alpha: 0.5)
         ..strokeWidth = 1;
@@ -384,7 +405,7 @@ class _HypnogramPainter extends CustomPainter {
       final t = rangeStart.add(
         Duration(
           microseconds:
-              ((dx - _trackLeftPx) / trackWidth * totalMicros).round(),
+              ((dx - labelColumnWidth) / trackWidth * totalMicros).round(),
         ),
       );
       SleepStageSegment? active;
@@ -395,7 +416,8 @@ class _HypnogramPainter extends CustomPainter {
         }
       }
       if (active != null) {
-        final dotPaint = Paint()..color = colors[active.type] ?? textColor;
+        final dotPaint = Paint()
+          ..color = stageStyles[active.type]?.color ?? textColor;
         final ringPaint = Paint()..color = haloBackground;
         final center = Offset(dx, _rowCenterY(active.type));
         canvas.drawCircle(center, 5, ringPaint);
@@ -424,8 +446,8 @@ class _HypnogramPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _HypnogramPainter oldDelegate) {
     return segments != oldDelegate.segments ||
-        colors != oldDelegate.colors ||
-        stageOrder != oldDelegate.stageOrder ||
+        stageStyles != oldDelegate.stageStyles ||
+        rowLayout != oldDelegate.rowLayout ||
         haloBackground != oldDelegate.haloBackground ||
         hoverDx != oldDelegate.hoverDx;
   }
@@ -467,32 +489,33 @@ class _TooltipBubble extends StatelessWidget {
   final String label;
   final String timeRange;
   final String duration;
+  final HypnogramTooltipConfig config;
 
   const _TooltipBubble({
     required this.color,
     required this.label,
     required this.timeRange,
     required this.duration,
+    required this.config,
   });
 
   @override
   Widget build(BuildContext context) {
-    final ink = Theme.of(context).colorScheme.inverseSurface;
+    final ink =
+        config.backgroundColor ?? Theme.of(context).colorScheme.inverseSurface;
     final onInk = Theme.of(context).colorScheme.onInverseSurface;
+    final labelStyle = config.labelStyle ??
+        TextStyle(color: onInk, fontWeight: FontWeight.w700, fontSize: 12);
+    final detailStyle = config.detailStyle ??
+        TextStyle(color: onInk.withValues(alpha: 0.85), fontSize: 11);
     return DecoratedBox(
       decoration: BoxDecoration(
         color: ink,
-        borderRadius: BorderRadius.circular(8),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x33000000),
-            blurRadius: 16,
-            offset: Offset(0, 6),
-          ),
-        ],
+        borderRadius: config.borderRadius,
+        boxShadow: config.shadow,
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        padding: config.padding,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -500,31 +523,20 @@ class _TooltipBubble extends StatelessWidget {
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  margin: const EdgeInsets.only(right: 6),
-                  decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-                ),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: onInk,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 12,
+                if (config.showColorDot)
+                  Container(
+                    width: 8,
+                    height: 8,
+                    margin: const EdgeInsets.only(right: 6),
+                    decoration:
+                        BoxDecoration(color: color, shape: BoxShape.circle),
                   ),
-                ),
+                Text(label, style: labelStyle),
               ],
             ),
             const SizedBox(height: 2),
-            Text(
-              timeRange,
-              style: TextStyle(color: onInk.withValues(alpha: 0.85), fontSize: 11),
-            ),
-            Text(
-              duration,
-              style: TextStyle(color: onInk.withValues(alpha: 0.85), fontSize: 11),
-            ),
+            Text(timeRange, style: detailStyle),
+            Text(duration, style: detailStyle),
           ],
         ),
       ),
