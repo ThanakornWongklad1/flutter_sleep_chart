@@ -3,14 +3,20 @@
 A lightweight, dependency-free Flutter widget that renders an Apple
 Health-style sleep stage chart from a list of sleep stage segments.
 
+The bundled `example/` app has three pages (switch via the bottom nav):
 
-<img alt="example usage" width="300" src="https://raw.githubusercontent.com/ThanakornWongklad1/flutter_sleep_chart/main/screenshots/example.png">
+<p>
+  <img alt="Normal (detailed) example" width="280" src="https://raw.githubusercontent.com/ThanakornWongklad1/flutter_sleep_chart/main/screenshots/example_normal.png">
+  <img alt="Coarse asleep example" width="280" src="https://raw.githubusercontent.com/ThanakornWongklad1/flutter_sleep_chart/main/screenshots/example_asleep.png">
+  <img alt="In-bed-only example" width="280" src="https://raw.githubusercontent.com/ThanakornWongklad1/flutter_sleep_chart/main/screenshots/example_inbed.png">
+</p>
 
 ## Features
 
 - One row per stage (Awake / REM / Light / Deep, or any custom set), each a
-  solid pill nested in its own glassy halo (a tint of the stage color
-  blended with the surface — no transparency stacking artifacts)
+  solid pill nested in its own glassy halo — a translucent tint of the
+  stage color that reads correctly against any background automatically,
+  light, dark, or custom
 - Gradient connector lines between stage transitions
 - Adjacent same-stage segments merge into one continuous bar, no seam
 - Minimum bar width clamp so brief real-world stage flips stay visible
@@ -20,11 +26,18 @@ Health-style sleep stage chart from a list of sleep stage segments.
   stage-colored dot, and a dashed vertical guide line
 - Fully configurable per-stage colors, labels, and row heights
 - Fully configurable tooltip content and style, or swap in your own widget
-- `onSegmentTap` callback, an optional hour-aligned time axis, optional row
-  and time grid lines, and a `.tap`-only interaction mode for use inside
-  scrollable/draggable parents
+- `onSegmentTap` callback, an optional hour-aligned time axis, row dividers
+  and dashed hourly gridlines (on by default, toggleable), and a
+  `.tap`-only interaction mode for use inside scrollable/draggable parents
+- `minHeight` keeps a short chart (e.g. a single-row `inBed`-only dataset)
+  from looking like a thin sliver next to charts with more rows
 - Bars animate in on first render and whenever `segments` changes
 - A standalone `HypnogramLegend` widget for the same `stageStyles` map
+- A coarse `SleepStageType.asleep` fallback for data sources without
+  REM/Light/Deep detail, rendered as a gradient spanning those rows via
+  `StageStyle.spanRows` — no extra row added
+- `SleepStageType.inBed` for the overall in-bed span, as its own ordinary
+  row independent of `asleep` and the finer stages
 - No dependencies beyond Flutter itself
 
 ## Getting started
@@ -104,13 +117,17 @@ Set `enableTooltip: false` to disable the scrub tooltip entirely.
 
 ### Time Axis, Grid Lines, Tap Callback, and Legend
 
+Row dividers (`showRowGridLines`) and dashed hourly gridlines
+(`showTimeGridLines`) are on by default — set either to `false` to turn
+them off:
+
 ```dart
 HypnogramChart(
   segments: segments,
   onSegmentTap: (segment) => print('Tapped ${segment.type}'),
   showTimeAxis: true,
-  showRowGridLines: true,
-  showTimeGridLines: true,
+  showRowGridLines: false, // turn off the row dividers
+  showTimeGridLines: false, // turn off the dashed hourly gridlines
   // Ignore drag/hover-move — only pointer-down selects a segment. Use this
   // if the chart sits inside a horizontally scrollable/draggable parent.
   interactionMode: HypnogramInteractionMode.tap,
@@ -144,6 +161,59 @@ HypnogramChart(
 
 Set `enableAnimation: false` to render instantly instead.
 
+### Coarse Asleep Stage & In-Bed Span
+
+If your data source only distinguishes asleep/awake without REM/Light/Deep
+detail, use `SleepStageType.asleep` in place of `rem`/`light`/`deep` (not
+alongside them). For the overall in-bed span (e.g. bedtime to out-of-bed
+time), use `SleepStageType.inBed` — an ordinary stage type with its own
+row, independent of `asleep` and the finer stages.
+
+Both work with **zero extra config** — just use the segment type, no
+`stageStyles` entry required:
+
+```dart
+HypnogramChart(
+  segments: [
+    SleepStageSegment(type: SleepStageType.awake, start: t0, end: t1),
+    SleepStageSegment(type: SleepStageType.asleep, start: t1, end: t2),
+  ],
+  // stageStyles omitted entirely — `asleep` gets a built-in color, label,
+  // and gradient spanning REM/Light/Deep automatically.
+)
+```
+
+If you *do* customize `stageStyles` (e.g. your own colors for the base
+four), `asleep`/`inBed` still work without needing an entry there either —
+`HypnogramChart` backfills whichever of the two your `segments` actually
+use but your map doesn't define, from `kFallbackHypnogramStageStyles`. You
+only need to add your own `StageStyle` for `asleep`/`inBed` when you want
+to override that default look, e.g. to customize the gradient's rows or
+extent:
+
+```dart
+stageStyles: const {
+  SleepStageType.awake: StageStyle(color: Colors.orange, label: 'Awake'),
+  SleepStageType.rem: StageStyle(color: Colors.purple, label: 'REM'),
+  SleepStageType.light: StageStyle(color: Colors.blue, label: 'Light'),
+  SleepStageType.deep: StageStyle(color: Colors.indigo, label: 'Deep'),
+  SleepStageType.asleep: StageStyle(
+    color: Colors.blue, // used for the legend dot & tooltip indicator
+    label: 'Asleep',
+    spanRows: [SleepStageType.rem, SleepStageType.light, SleepStageType.deep],
+    gradientRows: [SleepStageType.rem, SleepStageType.light], // narrower gradient
+  ),
+},
+```
+
+Building a standalone `HypnogramLegend` alongside a chart that relies on
+the defaults? Pass it through `resolveStageStyles` first, so it picks up
+the same backfilled entries the chart used internally:
+
+```dart
+HypnogramLegend(stageStyles: resolveStageStyles(stageStyles, segments))
+```
+
 ## Parameters
 
 ### `HypnogramChart`
@@ -151,8 +221,9 @@ Set `enableAnimation: false` to render instantly instead.
 | Parameter | Description | Default | Required |
 | :--- | :--- | :--- | :--- |
 | `segments` | The sleep data to render | - | Yes |
-| `stageStyles` | Color, label, and optional row height per stage. Map iteration order sets row order, top to bottom | `kDefaultHypnogramStageStyles` | No |
+| `stageStyles` | Color, label, and optional row height per stage. Map iteration order sets row order, top to bottom. `asleep`/`inBed` are backfilled automatically from `kFallbackHypnogramStageStyles` when used in `segments` but missing here — see below | `kDefaultHypnogramStageStyles` | No |
 | `rowHeight` | Default row height for any stage whose `StageStyle.rowHeight` is `null` | `40` | No |
+| `minHeight` | Minimum height for the rows area. When the natural row stack is shorter (e.g. a single `inBed`-only row), the rows are centered within it instead | `0` (→ no minimum) | No |
 | `barHeight` | Height of the solid stage bar within its row | `20` | No |
 | `haloPad` | Extra padding around each bar's tinted halo, in px | `2` | No |
 | `minBarWidth` | Minimum rendered width for a segment, so brief stages stay visible | `1` | No |
@@ -163,22 +234,24 @@ Set `enableAnimation: false` to render instantly instead.
 | `onSegmentTap` | Called with the segment under the pointer on every pointer-down | `null` | No |
 | `showTimeAxis` | Shows hour-aligned clock labels below the chart | `false` | No |
 | `timeAxisHeight` | Height reserved for `showTimeAxis`'s labels | `20` | No |
-| `showRowGridLines` | Draws a horizontal divider line above each stage row | `false` | No |
-| `showTimeGridLines` | Draws a vertical line at each hour-aligned tick | `false` | No |
+| `showRowGridLines` | Draws a solid horizontal divider line above each stage row | `true` | No |
+| `showTimeGridLines` | Draws a dashed vertical line at each hour-aligned tick | `true` | No |
 | `gridLineColor` | Color for the grid lines above | `null` (→ faint tint of the text color) | No |
 | `emptyBuilder` | Widget shown in place of the chart when `segments` is empty | `null` (→ blank box) | No |
 | `enableAnimation` | Whether bars animate in on first render and on `segments` change | `true` | No |
 | `animationDuration` | Duration of the reveal animation | `Duration(milliseconds: 450)` | No |
 | `animationCurve` | Easing curve of the reveal animation | `Curves.easeOutCubic` | No |
-| `haloBackground` | Base color each stage's halo is blended toward (32% stage color / 68% this) | `null` (→ `ColorScheme.surface`) | No |
+| `haloOpacity` | Opacity of each stage's tinted halo (a translucent overlay of the stage color — reads correctly against any background automatically) | `0.35` | No |
 
 ### `StageStyle`
 
 | Parameter | Description | Default | Required |
 | :--- | :--- | :--- | :--- |
-| `color` | Bar and halo tint for this stage | - | Yes |
+| `color` | Bar and halo tint for this stage. Also used for the legend dot, tooltip indicator, and scrub dot when `spanRows` is set | - | Yes |
 | `label` | Row label text, and the default tooltip stage line | - | Yes |
-| `rowHeight` | Per-stage row height override — e.g. render Deep taller than the rest | `null` (→ chart's `rowHeight`) | No |
+| `rowHeight` | Per-stage row height override — e.g. render Deep taller than the rest. Ignored when `spanRows` is set | `null` (→ chart's `rowHeight`) | No |
+| `spanRows` | When set, this stage skips its own row and instead renders as a translucent halo+bar gradient spanning the combined height of these other row types | `null` | No |
+| `gradientRows` | Row types whose colors (first → last) define the `spanRows` gradient, when that should differ from `spanRows` itself — e.g. spanning REM/Light/Deep's full height while gradienting only REM → Light | `null` (→ `spanRows`) | No |
 
 ### `HypnogramTooltipConfig`
 
@@ -230,12 +303,17 @@ class SleepStageSegment {
 ### `SleepStageType`
 
 ```dart
-enum SleepStageType { awake, rem, light, deep }
+enum SleepStageType { awake, rem, light, deep, asleep, inBed }
 ```
 
-Not limited to these four rows — any subset (or an app-specific enum-like
-set) works as long as `stageStyles` has an entry for every type your
-`segments` use.
+Not limited to these rows — any subset works as long as `stageStyles` has
+an entry for every type your `segments` use. `asleep` is a coarse fallback
+for data sources without REM/Light/Deep detail — use it in place of
+`rem`/`light`/`deep`, not alongside them, and give it a `spanRows` style
+(see `StageStyle` above) so it spans those rows instead of adding its own.
+`inBed` is the overall in-bed span — an ordinary stage type with its own
+row, independent of `asleep` and the finer stages; no special handling
+needed beyond giving it a `StageStyle` like any other type.
 
 ### Generate Sample Data
 
@@ -257,8 +335,8 @@ List<SleepStageSegment> generateSleepData() {
 1. **Row order**: Determined entirely by `stageStyles`' map iteration order —
    there's no separate ordering param.
 2. **Stage coverage**: `stageStyles` needs an entry for every `SleepStageType`
-   present in `segments`, or that stage falls back to the halo background
-   color and an empty label.
+   present in `segments`, or that stage falls back to the ambient text color
+   and an empty label.
 3. **Adjacent segments**: Same-stage segments that touch (`a.end == b.start`)
    are merged into one continuous bar before rendering — no visible seam,
    and the tooltip reports their combined duration.
@@ -271,10 +349,29 @@ List<SleepStageSegment> generateSleepData() {
    (touch) — no separate touch-vs-mouse configuration needed.
 7. **Time axis / grid ticks**: Always hour-aligned (e.g. 11 PM, 12 AM, 1 AM),
    not evenly spaced by count — a short-range chart may show only one or two
-   ticks, a multi-day one may show many.
+   ticks, a multi-day one may show many. Ticks thin out automatically
+   (every 2nd, 3rd, ... hour) when the chart isn't wide enough to fit an
+   hourly label at each one without overlapping.
 8. **`onSegmentTap`**: Fires on every pointer-down, independent of
    `enableTooltip` and `interactionMode` — it fires even with the tooltip
    disabled or in `.tap` mode.
+9. **`spanRows`**: The row types a spanning stage names (e.g. `asleep`'s
+   `[rem, light, deep]`) still need their own `stageStyles` entries, even
+   if no segment ever uses those exact types — that's what defines the row
+   space it spans and the colors its gradient samples.
+10. **Transition connectors**: Only drawn between two segments that are
+    exactly back-to-back in time (`a.end == b.start`). A row like `inBed`
+    that overlaps the whole night — rather than sitting in the same
+    contiguous sequence as the other segments — simply gets no connector,
+    instead of a spurious line to whatever segment happens to sit next to
+    it in the list.
+11. **`asleep`/`inBed` defaults**: Automatic — the fallback only fires per
+    type when it's present in `segments` *and* absent from your
+    `stageStyles`; give either your own `StageStyle` entry to override the
+    default look, and it's used as-is. `HypnogramLegend` doesn't see
+    `segments`, so it can't apply this backfill itself — pass it through
+    `resolveStageStyles(stageStyles, segments)` if you want the legend to
+    match a chart relying on the defaults.
 
 ## Example App
 
@@ -332,8 +429,20 @@ class ExampleApp extends StatelessWidget {
 }
 ```
 
-See `example/lib/main.dart` for the actual runnable version, including a
-fragmented micro-arousal cluster that exercises the minimum-bar-width clamp.
+The runnable example app (`example/lib/`) is split across three pages,
+switchable via a bottom nav bar:
+
+- `normal_page.dart` — the detailed Awake/REM/Light/Deep breakdown, including
+  a fragmented micro-arousal cluster that exercises the minimum-bar-width
+  clamp, plus a second chart with two separate sleep sessions (a real gap
+  in `segments` between them, not an `awake` segment).
+- `asleep_page.dart` — the coarse `asleep` fallback, with no `stageStyles`
+  entry for it at all (relies on the built-in default).
+- `in_bed_page.dart` — `inBed` on its own, with no other stage types and no
+  `stageStyles` override at all.
+
+`shared.dart` holds the tooltip config and small helpers reused across all
+three pages.
 
 ## Customization Tips
 

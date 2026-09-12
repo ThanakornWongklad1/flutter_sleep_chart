@@ -236,4 +236,273 @@ void main() {
     expect(find.text('Light'), findsOneWidget);
     expect(find.text('Deep'), findsOneWidget);
   });
+
+  testWidgets(
+    'a spanRows stage type borrows other rows instead of adding its own',
+    (tester) async {
+      const asleepStyles = {
+        SleepStageType.awake: StageStyle(
+          color: Color(0xFFE0729C),
+          label: 'Awake',
+        ),
+        SleepStageType.rem: StageStyle(color: Color(0xFF8E6BD9), label: 'REM'),
+        SleepStageType.light: StageStyle(
+          color: Color(0xFF4F8FE8),
+          label: 'Light',
+        ),
+        SleepStageType.deep: StageStyle(
+          color: Color(0xFF1F2B6B),
+          label: 'Deep',
+        ),
+        SleepStageType.asleep: StageStyle(
+          color: Color(0xFF4F8FE8),
+          label: 'Asleep',
+          spanRows: [
+            SleepStageType.rem,
+            SleepStageType.light,
+            SleepStageType.deep,
+          ],
+        ),
+      };
+      final asleepSegments = [
+        SleepStageSegment(
+          type: SleepStageType.awake,
+          start: start,
+          end: start.add(const Duration(minutes: 5)),
+        ),
+        SleepStageSegment(
+          type: SleepStageType.asleep,
+          start: start.add(const Duration(minutes: 5)),
+          end: start.add(const Duration(minutes: 115)),
+        ),
+      ];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: HypnogramChart(
+              segments: asleepSegments,
+              stageStyles: asleepStyles,
+            ),
+          ),
+        ),
+      );
+
+      // Still 4 rows (awake/rem/light/deep) at the default 40px height each
+      // — "asleep" borrows their combined space instead of adding a 5th row.
+      expect(tester.getSize(find.byType(HypnogramChart)).height, 160);
+
+      final chartFinder = find.byType(HypnogramChart);
+      final topLeft = tester.getTopLeft(chartFinder);
+      final size = tester.getSize(chartFinder);
+      final dx = _dxForFraction(60 / 115, size.width);
+      final gesture = await tester.startGesture(
+        topLeft + Offset(dx, size.height * 0.5),
+      );
+      await tester.pump();
+      expect(find.text('Asleep'), findsOneWidget);
+      await gesture.up();
+    },
+  );
+
+  testWidgets(
+    'gradientRows narrows the gradient colors without affecting the span extent',
+    (tester) async {
+      const asleepStyles = {
+        SleepStageType.rem: StageStyle(color: Color(0xFF8E6BD9), label: 'REM'),
+        SleepStageType.light: StageStyle(
+          color: Color(0xFF4F8FE8),
+          label: 'Light',
+        ),
+        SleepStageType.deep: StageStyle(
+          color: Color(0xFF1F2B6B),
+          label: 'Deep',
+        ),
+        SleepStageType.asleep: StageStyle(
+          color: Color(0xFF4F8FE8),
+          label: 'Asleep',
+          spanRows: [
+            SleepStageType.rem,
+            SleepStageType.light,
+            SleepStageType.deep,
+          ],
+          gradientRows: [SleepStageType.rem, SleepStageType.light],
+        ),
+      };
+      final asleepSegments = [
+        SleepStageSegment(
+          type: SleepStageType.asleep,
+          start: start,
+          end: start.add(const Duration(minutes: 60)),
+        ),
+      ];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: HypnogramChart(
+              segments: asleepSegments,
+              stageStyles: asleepStyles,
+            ),
+          ),
+        ),
+      );
+
+      // Still spans all 3 rows (rem/light/deep) — gradientRows only
+      // narrows which colors the gradient samples, not the extent.
+      expect(tester.getSize(find.byType(HypnogramChart)).height, 120);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('an overlapping in-bed row renders without throwing', (
+    tester,
+  ) async {
+    const inBedStyles = {
+      SleepStageType.inBed: StageStyle(
+        color: Color(0xFF6C7A96),
+        label: 'In Bed',
+      ),
+      SleepStageType.awake: StageStyle(
+        color: Color(0xFFE0729C),
+        label: 'Awake',
+      ),
+      SleepStageType.light: StageStyle(
+        color: Color(0xFF4F8FE8),
+        label: 'Light',
+      ),
+    };
+    // "In bed" spans the whole range while awake/light are sub-ranges
+    // within it — a non-contiguous, overlapping segment list.
+    final inBedSegments = [
+      SleepStageSegment(
+        type: SleepStageType.inBed,
+        start: start,
+        end: start.add(const Duration(minutes: 120)),
+      ),
+      SleepStageSegment(
+        type: SleepStageType.awake,
+        start: start,
+        end: start.add(const Duration(minutes: 10)),
+      ),
+      SleepStageSegment(
+        type: SleepStageType.light,
+        start: start.add(const Duration(minutes: 10)),
+        end: start.add(const Duration(minutes: 120)),
+      ),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HypnogramChart(
+            segments: inBedSegments,
+            stageStyles: inBedStyles,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byType(HypnogramChart), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'asleep falls back to a built-in default with no stageStyles override',
+    (tester) async {
+      final segs = [
+        SleepStageSegment(
+          type: SleepStageType.awake,
+          start: start,
+          end: start.add(const Duration(minutes: 5)),
+        ),
+        SleepStageSegment(
+          type: SleepStageType.asleep,
+          start: start.add(const Duration(minutes: 5)),
+          end: start.add(const Duration(minutes: 60)),
+        ),
+      ];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: HypnogramChart(segments: segs)),
+        ),
+      );
+
+      // Still 4 rows (default awake/rem/light/deep) — the "asleep" fallback
+      // spans them instead of adding a 5th.
+      expect(tester.getSize(find.byType(HypnogramChart)).height, 160);
+
+      final chartFinder = find.byType(HypnogramChart);
+      final topLeft = tester.getTopLeft(chartFinder);
+      final size = tester.getSize(chartFinder);
+      final dx = _dxForFraction(30 / 60, size.width);
+      final gesture = await tester.startGesture(
+        topLeft + Offset(dx, size.height * 0.5),
+      );
+      await tester.pump();
+      expect(find.text('Asleep'), findsOneWidget);
+      await gesture.up();
+    },
+  );
+
+  test('resolveStageStyles backfills only missing, used fallback types', () {
+    final segs = [
+      SleepStageSegment(
+        type: SleepStageType.asleep,
+        start: start,
+        end: start.add(const Duration(minutes: 10)),
+      ),
+    ];
+    final resolved = resolveStageStyles(kDefaultHypnogramStageStyles, segs);
+
+    expect(resolved[SleepStageType.asleep]?.label, 'Asleep');
+    // inBed isn't used in segs, so it's left out entirely.
+    expect(resolved.containsKey(SleepStageType.inBed), isFalse);
+    // Existing entries pass through untouched.
+    expect(
+      resolved[SleepStageType.awake],
+      kDefaultHypnogramStageStyles[SleepStageType.awake],
+    );
+  });
+
+  testWidgets('minHeight pads a single-row chart up to that height', (
+    tester,
+  ) async {
+    final soloSegments = [
+      SleepStageSegment(
+        type: SleepStageType.inBed,
+        start: start,
+        end: start.add(const Duration(minutes: 30)),
+      ),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HypnogramChart(
+            segments: soloSegments,
+            stageStyles: const {},
+            minHeight: 160,
+          ),
+        ),
+      ),
+    );
+
+    expect(tester.getSize(find.byType(HypnogramChart)).height, 160);
+  });
+
+  testWidgets('minHeight has no effect once rows already exceed it', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: HypnogramChart(segments: segments, minHeight: 50)),
+      ),
+    );
+
+    // Default stageStyles always has 4 rows (160px), which already
+    // exceeds the 50px minimum, so it's unaffected.
+    expect(tester.getSize(find.byType(HypnogramChart)).height, 160);
+  });
 }

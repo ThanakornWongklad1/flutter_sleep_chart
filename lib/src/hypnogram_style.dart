@@ -7,14 +7,37 @@ import 'sleep_stage.dart';
 /// Row order in [HypnogramChart] is the iteration order of the
 /// `stageStyles` map, top to bottom.
 class StageStyle {
+  /// Bar color, and the color used for the legend dot, tooltip indicator,
+  /// and scrub dot. When [spanRows] is set, the bar itself uses a gradient
+  /// across the spanned rows' colors instead — [color] is still used for
+  /// those single-color UI bits.
   final Color color;
   final String label;
 
   /// Height of this stage's row. Falls back to the chart's `rowHeight` when
-  /// null.
+  /// null. Ignored when [spanRows] is set (no row is reserved).
   final double? rowHeight;
 
-  const StageStyle({required this.color, required this.label, this.rowHeight});
+  /// When set, this stage type doesn't get its own row — its bar instead
+  /// spans the combined vertical extent of these other row types. Useful
+  /// for a coarse fallback stage (e.g. "asleep") that covers a range of
+  /// finer stages (e.g. REM/Light/Deep) without distinguishing between
+  /// them.
+  final List<SleepStageType>? spanRows;
+
+  /// Row types whose colors define the [spanRows] gradient (first → last),
+  /// when that should differ from [spanRows] itself — e.g. spanning
+  /// REM/Light/Deep's full height while gradienting only REM → Light.
+  /// Defaults to [spanRows] when null.
+  final List<SleepStageType>? gradientRows;
+
+  const StageStyle({
+    required this.color,
+    required this.label,
+    this.rowHeight,
+    this.spanRows,
+    this.gradientRows,
+  });
 }
 
 /// Default stage styles, top to bottom: awake, rem, light, deep.
@@ -24,6 +47,38 @@ const kDefaultHypnogramStageStyles = <SleepStageType, StageStyle>{
   SleepStageType.light: StageStyle(color: Color(0xFF4F8FE8), label: 'Light'),
   SleepStageType.deep: StageStyle(color: Color(0xFF2C3E8C), label: 'Deep'),
 };
+
+/// Built-in styles for [SleepStageType.inBed] and [SleepStageType.asleep] —
+/// used automatically by [HypnogramChart] (via [resolveStageStyles]) for
+/// whichever of these appear in `segments` but aren't in `stageStyles`, so
+/// they work out of the box without having to define them yourself.
+const kFallbackHypnogramStageStyles = <SleepStageType, StageStyle>{
+  SleepStageType.inBed: StageStyle(color: Color(0xFF82DCFF), label: 'In Bed'),
+  SleepStageType.asleep: StageStyle(
+    color: Color(0xFF4F8FE8),
+    label: 'Asleep',
+    spanRows: [SleepStageType.rem, SleepStageType.light, SleepStageType.deep],
+    gradientRows: [SleepStageType.rem, SleepStageType.light],
+  ),
+};
+
+/// Backfills [stageStyles] with [kFallbackHypnogramStageStyles] entries for
+/// any type present in [segments] but missing from [stageStyles] — the same
+/// resolution [HypnogramChart] applies internally. Use this to build a
+/// [HypnogramLegend] that matches a chart relying on those defaults.
+Map<SleepStageType, StageStyle> resolveStageStyles(
+  Map<SleepStageType, StageStyle> stageStyles,
+  List<SleepStageSegment> segments,
+) {
+  final usedTypes = segments.map((s) => s.type).toSet();
+  final backfill = <SleepStageType, StageStyle>{
+    for (final type in kFallbackHypnogramStageStyles.keys)
+      if (usedTypes.contains(type) && !stageStyles.containsKey(type))
+        type: kFallbackHypnogramStageStyles[type]!,
+  };
+  if (backfill.isEmpty) return stageStyles;
+  return {...backfill, ...stageStyles};
+}
 
 /// Configures the scrub tooltip's content and appearance.
 ///

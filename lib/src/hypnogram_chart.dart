@@ -35,7 +35,7 @@ String _formatClock(DateTime t) {
 String _formatDuration(Duration d) {
   final h = d.inHours;
   final m = d.inMinutes % 60;
-  return (h > 0 ? '${h}h ' : '') + '${m}m';
+  return h > 0 ? '${h}h ${m}m' : '${m}m';
 }
 
 /// Hour-aligned tick times within `[start, end]`, for the time axis and
@@ -51,30 +51,112 @@ List<DateTime> _hourTicks(DateTime start, DateTime end) {
   return ticks;
 }
 
+/// Thins an evenly-spaced tick list so labels at this font size don't
+/// overlap within [availableWidth] — skips every Nth tick (keeping
+/// alignment to the original hourly grid) rather than repacking arbitrary
+/// points, so a wide multi-hour range still reads cleanly.
+List<DateTime> _thinTicksToFit(List<DateTime> ticks, double availableWidth) {
+  if (ticks.length <= 1 || availableWidth <= 0) return ticks;
+  final probe = TextPainter(
+    text: const TextSpan(text: '12:00 PM', style: TextStyle(fontSize: 10)),
+    textDirection: TextDirection.ltr,
+  )..layout();
+  final minSpacing = probe.width + 8;
+  final maxFit = (availableWidth / minSpacing).floor().clamp(1, ticks.length);
+  if (maxFit >= ticks.length) return ticks;
+  final step = (ticks.length / maxFit).ceil();
+  return [for (var i = 0; i < ticks.length; i += step) ticks[i]];
+}
+
 /// Per-row vertical layout, derived from `stageStyles` order and each
-/// stage's height override (or the chart's default `rowHeight`).
+/// stage's height override (or the chart's default `rowHeight`). Stage
+/// types whose [StageStyle.spanRows] is set don't get their own row — they
+/// borrow the combined extent of the rows they span instead.
+///
+/// When the natural stack of rows is shorter than `minHeight`, the rows are
+/// centered within it — `top`/`totalHeight` already reflect that offset, so
+/// nothing downstream needs to know about it. `rowsBottom` is the actual
+/// bottom edge of the rows themselves (before any centering padding),
+/// e.g. for closing off a row-divider grid line.
 typedef _RowLayout = ({
   List<SleepStageType> order,
   Map<SleepStageType, double> top,
   Map<SleepStageType, double> height,
+  double rowsBottom,
   double totalHeight,
 });
 
 _RowLayout _layoutRows(
   Map<SleepStageType, StageStyle> stageStyles,
   double defaultRowHeight,
+  double minHeight,
 ) {
-  final order = stageStyles.keys.toList();
-  final top = <SleepStageType, double>{};
+  final order = <SleepStageType>[];
+  final naturalTop = <SleepStageType, double>{};
   final height = <SleepStageType, double>{};
   var y = 0.0;
-  for (final type in order) {
-    final h = stageStyles[type]?.rowHeight ?? defaultRowHeight;
-    top[type] = y;
-    height[type] = h;
+  for (final entry in stageStyles.entries) {
+    final spanRows = entry.value.spanRows;
+    if (spanRows != null && spanRows.isNotEmpty) continue;
+    final h = entry.value.rowHeight ?? defaultRowHeight;
+    order.add(entry.key);
+    naturalTop[entry.key] = y;
+    height[entry.key] = h;
     y += h;
   }
-  return (order: order, top: top, height: height, totalHeight: y);
+  final rowsHeight = y;
+  final totalHeight = rowsHeight < minHeight ? minHeight : rowsHeight;
+  final rowsTop = (totalHeight - rowsHeight) / 2;
+  final top = {
+    for (final entry in naturalTop.entries) entry.key: entry.value + rowsTop,
+  };
+  return (
+    order: order,
+    top: top,
+    height: height,
+    rowsBottom: rowsTop + rowsHeight,
+    totalHeight: totalHeight,
+  );
+}
+
+/// The combined vertical extent of the rows a spanning stage type covers
+/// (see [StageStyle.spanRows]), or `null` if [type] doesn't span rows, or
+/// none of the rows it names exist in [rowLayout].
+({double top, double bottom})? _spanExtent(
+  SleepStageType type,
+  Map<SleepStageType, StageStyle> stageStyles,
+  _RowLayout rowLayout,
+) {
+  final spanRows = stageStyles[type]?.spanRows;
+  if (spanRows == null || spanRows.isEmpty) return null;
+  double? top;
+  double? bottom;
+  for (final r in spanRows) {
+    final t = rowLayout.top[r];
+    final h = rowLayout.height[r];
+    if (t == null || h == null) continue;
+    top = (top == null || t < top) ? t : top;
+    final b = t + h;
+    bottom = (bottom == null || b > bottom) ? b : bottom;
+  }
+  if (top == null || bottom == null) return null;
+  return (top: top, bottom: bottom);
+}
+
+/// Vertical center of where [type] renders — the midpoint of its spanned
+/// rows if it's a spanning stage type (see [StageStyle.spanRows]), else its
+/// own row's center. `0` if [type] has neither.
+double _segmentCenterY(
+  SleepStageType type,
+  Map<SleepStageType, StageStyle> stageStyles,
+  _RowLayout rowLayout,
+) {
+  final span = _spanExtent(type, stageStyles, rowLayout);
+  if (span != null) return (span.top + span.bottom) / 2;
+  final top = rowLayout.top[type];
+  final height = rowLayout.height[type];
+  if (top == null || height == null) return 0;
+  return top + height / 2;
 }
 
 /// An Apple Health-style hypnogram: one glassy-halo bar row per stage, with
@@ -90,6 +172,14 @@ class HypnogramChart extends StatefulWidget {
   /// Default row height for stages that don't set their own in
   /// [StageStyle.rowHeight].
   final double rowHeight;
+
+  /// Minimum height for the rows area (excludes [showTimeAxis]'s strip).
+  /// When the natural row stack is shorter — e.g. a single-row chart like
+  /// `inBed`-only data — the rows are centered within this height instead
+  /// of the chart just being that short. Has no effect once there are
+  /// enough rows to exceed it on their own.
+  final double minHeight;
+
   final double barHeight;
   final double haloPad;
   final double minBarWidth;
@@ -114,10 +204,10 @@ class HypnogramChart extends StatefulWidget {
   /// Height reserved for [showTimeAxis]'s labels.
   final double timeAxisHeight;
 
-  /// Draws a horizontal divider line above each stage row.
+  /// Draws a solid horizontal divider line above each stage row.
   final bool showRowGridLines;
 
-  /// Draws a vertical line at each hour-aligned tick.
+  /// Draws a dashed vertical line at each hour-aligned tick.
   final bool showTimeGridLines;
 
   /// Color for [showRowGridLines]/[showTimeGridLines]. Defaults to a faint
@@ -134,15 +224,18 @@ class HypnogramChart extends StatefulWidget {
   final Duration animationDuration;
   final Curve animationCurve;
 
-  /// Base color the halo is blended toward (32% stage color, 68% this).
-  /// Defaults to the ambient [ColorScheme.surface].
-  final Color? haloBackground;
+  /// Opacity of each stage's tinted halo. The halo is a translucent overlay
+  /// of the stage color (true alpha compositing), so it reads correctly
+  /// against any ambient background automatically — no need to tell the
+  /// chart what's behind it.
+  final double haloOpacity;
 
   const HypnogramChart({
     super.key,
     required this.segments,
     this.stageStyles = kDefaultHypnogramStageStyles,
     this.rowHeight = 40,
+    this.minHeight = 0,
     this.barHeight = 20,
     this.haloPad = 2,
     this.minBarWidth = 1,
@@ -153,14 +246,14 @@ class HypnogramChart extends StatefulWidget {
     this.onSegmentTap,
     this.showTimeAxis = false,
     this.timeAxisHeight = 20,
-    this.showRowGridLines = false,
-    this.showTimeGridLines = false,
+    this.showRowGridLines = true,
+    this.showTimeGridLines = true,
     this.gridLineColor,
     this.emptyBuilder,
     this.enableAnimation = true,
     this.animationDuration = const Duration(milliseconds: 450),
     this.animationCurve = Curves.easeOutCubic,
-    this.haloBackground,
+    this.haloOpacity = 0.35,
   });
 
   @override
@@ -254,12 +347,18 @@ class _HypnogramChartState extends State<HypnogramChart>
 
   @override
   Widget build(BuildContext context) {
-    final rowLayout = _layoutRows(widget.stageStyles, widget.rowHeight);
+    final effectiveStyles = resolveStageStyles(
+      widget.stageStyles,
+      widget.segments,
+    );
+    final rowLayout = _layoutRows(
+      effectiveStyles,
+      widget.rowHeight,
+      widget.minHeight,
+    );
     final chartHeight = rowLayout.totalHeight;
     final totalHeight =
         chartHeight + (widget.showTimeAxis ? widget.timeAxisHeight : 0);
-    final haloBackground =
-        widget.haloBackground ?? Theme.of(context).colorScheme.surface;
     final textColor = Theme.of(context).colorScheme.onSurfaceVariant;
 
     if (widget.segments.isEmpty) {
@@ -304,13 +403,13 @@ class _HypnogramChartState extends State<HypnogramChart>
                         size: Size(width, totalHeight),
                         painter: _HypnogramPainter(
                           segments: _merged,
-                          stageStyles: widget.stageStyles,
+                          stageStyles: effectiveStyles,
                           rowLayout: rowLayout,
                           barHeight: widget.barHeight,
                           haloPad: widget.haloPad,
                           minBarWidth: widget.minBarWidth,
                           labelColumnWidth: widget.labelColumnWidth,
-                          haloBackground: haloBackground,
+                          haloOpacity: widget.haloOpacity,
                           textColor: textColor,
                           hoverDx: _hoverLocal?.dx,
                           showTimeAxis: widget.showTimeAxis,
@@ -329,26 +428,23 @@ class _HypnogramChartState extends State<HypnogramChart>
                       child: CustomSingleChildLayout(
                         delegate: _TooltipLayoutDelegate(
                           _hoverLocal!.dx,
-                          (rowLayout.top[_hoverSeg!.type] ?? 0) +
-                              (rowLayout.height[_hoverSeg!.type] ??
-                                      widget.rowHeight) /
-                                  2,
+                          _segmentCenterY(
+                            _hoverSeg!.type,
+                            effectiveStyles,
+                            rowLayout,
+                          ),
                         ),
                         child: widget.tooltip.builder != null
                             ? widget.tooltip.builder!(context, _hoverSeg!)
                             : _TooltipBubble(
                                 color:
-                                    widget
-                                        .stageStyles[_hoverSeg!.type]
-                                        ?.color ??
-                                    haloBackground,
+                                    effectiveStyles[_hoverSeg!.type]?.color ??
+                                    textColor,
                                 label:
                                     widget.tooltip.labelText?.call(
                                       _hoverSeg!,
                                     ) ??
-                                    widget
-                                        .stageStyles[_hoverSeg!.type]
-                                        ?.label ??
+                                    effectiveStyles[_hoverSeg!.type]?.label ??
                                     '',
                                 timeRange:
                                     widget.tooltip.timeRangeText?.call(
@@ -382,7 +478,7 @@ class _HypnogramPainter extends CustomPainter {
   final double haloPad;
   final double minBarWidth;
   final double labelColumnWidth;
-  final Color haloBackground;
+  final double haloOpacity;
   final Color textColor;
   final double? hoverDx;
   final bool showTimeAxis;
@@ -399,7 +495,7 @@ class _HypnogramPainter extends CustomPainter {
     required this.haloPad,
     required this.minBarWidth,
     required this.labelColumnWidth,
-    required this.haloBackground,
+    required this.haloOpacity,
     required this.textColor,
     required this.hoverDx,
     required this.showTimeAxis,
@@ -409,12 +505,8 @@ class _HypnogramPainter extends CustomPainter {
     required this.revealProgress,
   });
 
-  double _rowCenterY(SleepStageType type) {
-    final top = rowLayout.top[type];
-    final height = rowLayout.height[type];
-    if (top == null || height == null) return 0;
-    return top + height / 2;
-  }
+  double _centerY(SleepStageType type) =>
+      _segmentCenterY(type, stageStyles, rowLayout);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -447,14 +539,14 @@ class _HypnogramPainter extends CustomPainter {
         );
       }
       canvas.drawLine(
-        Offset(labelColumnWidth, chartHeight),
-        Offset(size.width, chartHeight),
+        Offset(labelColumnWidth, rowLayout.rowsBottom),
+        Offset(size.width, rowLayout.rowsBottom),
         gridPaint,
       );
     }
 
     final ticks = (showTimeGridLines || showTimeAxis)
-        ? _hourTicks(rangeStart, rangeEnd)
+        ? _thinTicksToFit(_hourTicks(rangeStart, rangeEnd), trackWidth)
         : const <DateTime>[];
 
     if (showTimeGridLines) {
@@ -463,7 +555,12 @@ class _HypnogramPainter extends CustomPainter {
         ..strokeWidth = 1;
       for (final t in ticks) {
         final x = xOf(t);
-        canvas.drawLine(Offset(x, 0), Offset(x, chartHeight), gridPaint);
+        _drawDashedLine(
+          canvas,
+          Offset(x, 0),
+          Offset(x, chartHeight),
+          gridPaint,
+        );
       }
     }
 
@@ -481,7 +578,7 @@ class _HypnogramPainter extends CustomPainter {
         textDirection: TextDirection.ltr,
         textAlign: TextAlign.right,
       )..layout(maxWidth: labelColumnWidth - 12);
-      final y = _rowCenterY(type) - tp.height / 2;
+      final y = _centerY(type) - tp.height / 2;
       tp.paint(canvas, Offset(labelColumnWidth - 12 - tp.width, y));
     }
 
@@ -500,7 +597,61 @@ class _HypnogramPainter extends CustomPainter {
       }
       width *= revealProgress;
 
-      final centerY = _rowCenterY(seg.type);
+      final span = _spanExtent(seg.type, stageStyles, rowLayout);
+      if (span != null) {
+        // Spanning stage (e.g. a coarse "asleep" fallback): fill the full
+        // combined extent of the rows it spans with a two-stop gradient
+        // from the first to the last gradientRows (or spanRows, if
+        // gradientRows isn't set) type's color, instead of a normal row bar.
+        final colorRowTypes =
+            stageStyles[seg.type]!.gradientRows ??
+            stageStyles[seg.type]!.spanRows!;
+        final spanColors = [
+          stageStyles[colorRowTypes.first]?.color ?? textColor,
+          stageStyles[colorRowTypes.last]?.color ?? textColor,
+        ];
+        final rect = Rect.fromLTWH(
+          left,
+          span.top,
+          width,
+          span.bottom - span.top,
+        );
+
+        Paint gradientPaint(double alpha, Rect r) {
+          final colors = [
+            for (final c in spanColors) c.withValues(alpha: alpha),
+          ];
+          if (colors.length > 1) {
+            return Paint()
+              ..shader = ui.Gradient.linear(
+                Offset(left + width / 2, r.top),
+                Offset(left + width / 2, r.bottom),
+                colors,
+                [
+                  for (var i = 0; i < colors.length; i++)
+                    i / (colors.length - 1),
+                ],
+              );
+          }
+          return Paint()
+            ..color = colors.isNotEmpty
+                ? colors.first
+                : textColor.withValues(alpha: alpha);
+        }
+
+        final haloRect = rect.inflate(haloPad);
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(haloRect, const Radius.circular(6)),
+          gradientPaint(haloOpacity * revealProgress, haloRect),
+        );
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(rect, const Radius.circular(5)),
+          gradientPaint(0.45 * revealProgress, rect),
+        );
+        continue;
+      }
+
+      final centerY = _centerY(seg.type);
       final barRect = Rect.fromLTWH(
         left,
         centerY - barHeight / 2,
@@ -508,14 +659,10 @@ class _HypnogramPainter extends CustomPainter {
         barHeight,
       );
       final haloRect = barRect.inflate(haloPad);
-      final stageColor = stageStyles[seg.type]?.color ?? haloBackground;
+      final stageColor = stageStyles[seg.type]?.color ?? textColor;
 
       final haloPaint = Paint()
-        ..color = Color.lerp(
-          stageColor,
-          haloBackground,
-          0.68,
-        )!.withValues(alpha: revealProgress);
+        ..color = stageColor.withValues(alpha: haloOpacity * revealProgress);
       canvas.drawRRect(
         RRect.fromRectAndRadius(haloRect, const Radius.circular(6)),
         haloPaint,
@@ -530,15 +677,19 @@ class _HypnogramPainter extends CustomPainter {
     }
 
     // Stage-transition connectors: straight line, opacity fades 0→0.25→0.
+    // Only drawn between segments that are actually back-to-back in time —
+    // a spanning row like "in bed" that overlaps the whole night otherwise
+    // has no real transition to connect to.
     for (var i = 0; i < segments.length - 1; i++) {
       final from = segments[i];
       final to = segments[i + 1];
+      if (!from.end.isAtSameMomentAs(to.start)) continue;
       final x1 = xOf(from.end);
       final x2 = xOf(to.start);
-      final y1 = _rowCenterY(from.type);
-      final y2 = _rowCenterY(to.type);
-      final fromColor = stageStyles[from.type]?.color ?? haloBackground;
-      final toColor = stageStyles[to.type]?.color ?? haloBackground;
+      final y1 = _centerY(from.type);
+      final y2 = _centerY(to.type);
+      final fromColor = stageStyles[from.type]?.color ?? textColor;
+      final toColor = stageStyles[to.type]?.color ?? textColor;
 
       final shader = ui.Gradient.linear(
         Offset(x1, y1),
@@ -578,16 +729,6 @@ class _HypnogramPainter extends CustomPainter {
     // Scrub guide line + dot.
     final dx = hoverDx;
     if (dx != null && dx >= labelColumnWidth && dx <= size.width) {
-      final guidePaint = Paint()
-        ..color = textColor.withValues(alpha: 0.5)
-        ..strokeWidth = 1;
-      _drawDashedLine(
-        canvas,
-        Offset(dx, 0),
-        Offset(dx, chartHeight),
-        guidePaint,
-      );
-
       final t = rangeStart.add(
         Duration(
           microseconds: ((dx - labelColumnWidth) / trackWidth * totalMicros)
@@ -601,13 +742,44 @@ class _HypnogramPainter extends CustomPainter {
           break;
         }
       }
+
+      final guidePaint = Paint()
+        ..color = textColor.withValues(alpha: 0.5)
+        ..strokeWidth = 1;
       if (active != null) {
+        // Leave a gap in the dashed line around the dot instead of erasing
+        // it with an assumed background color, so this works on any
+        // backdrop without needing to know what it is.
+        const dotGap = 8.0;
+        final dotY = _centerY(active.type);
+        final topEnd = (dotY - dotGap).clamp(0.0, chartHeight);
+        final bottomStart = (dotY + dotGap).clamp(0.0, chartHeight);
+        if (topEnd > 0) {
+          _drawDashedLine(
+            canvas,
+            Offset(dx, 0),
+            Offset(dx, topEnd),
+            guidePaint,
+          );
+        }
+        if (bottomStart < chartHeight) {
+          _drawDashedLine(
+            canvas,
+            Offset(dx, bottomStart),
+            Offset(dx, chartHeight),
+            guidePaint,
+          );
+        }
         final dotPaint = Paint()
           ..color = stageStyles[active.type]?.color ?? textColor;
-        final ringPaint = Paint()..color = haloBackground;
-        final center = Offset(dx, _rowCenterY(active.type));
-        canvas.drawCircle(center, 5, ringPaint);
-        canvas.drawCircle(center, 3, dotPaint);
+        canvas.drawCircle(Offset(dx, dotY), 4, dotPaint);
+      } else {
+        _drawDashedLine(
+          canvas,
+          Offset(dx, 0),
+          Offset(dx, chartHeight),
+          guidePaint,
+        );
       }
     }
   }
@@ -630,7 +802,7 @@ class _HypnogramPainter extends CustomPainter {
     return segments != oldDelegate.segments ||
         stageStyles != oldDelegate.stageStyles ||
         rowLayout != oldDelegate.rowLayout ||
-        haloBackground != oldDelegate.haloBackground ||
+        haloOpacity != oldDelegate.haloOpacity ||
         hoverDx != oldDelegate.hoverDx ||
         showTimeAxis != oldDelegate.showTimeAxis ||
         showRowGridLines != oldDelegate.showRowGridLines ||
