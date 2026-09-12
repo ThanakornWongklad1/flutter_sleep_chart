@@ -6,9 +6,9 @@ Health-style sleep stage chart from a list of sleep stage segments.
 The bundled `example/` app has three pages (switch via the bottom nav):
 
 <p>
-  <img alt="Normal (detailed) example" width="280" src="https://raw.githubusercontent.com/ThanakornWongklad1/flutter_sleep_chart/main/screenshots/example_normal.png">
-  <img alt="Coarse asleep example" width="280" src="https://raw.githubusercontent.com/ThanakornWongklad1/flutter_sleep_chart/main/screenshots/example_asleep.png">
-  <img alt="In-bed-only example" width="280" src="https://raw.githubusercontent.com/ThanakornWongklad1/flutter_sleep_chart/main/screenshots/example_inbed.png">
+  <img alt="Normal (detailed) example" width="220" src="https://raw.githubusercontent.com/ThanakornWongklad1/flutter_sleep_chart/main/screenshots/example_normal.png">
+  <img alt="Coarse asleep example" width="220" src="https://raw.githubusercontent.com/ThanakornWongklad1/flutter_sleep_chart/main/screenshots/example_asleep.png">
+  <img alt="In-bed-only example" width="220" src="https://raw.githubusercontent.com/ThanakornWongklad1/flutter_sleep_chart/main/screenshots/example_inbed.png">
 </p>
 
 ## Features
